@@ -18,7 +18,7 @@ if __name__ == "__main__":
                         help="Export files from moodle directories.")
     parser.add_argument('-g', '--grade', type=str,
                         help="Read the grade on the first page of the pdf.\n"
-                             "Need to define a box or use a predetermined one among:\n"
+                             "Need to define the box in config. Here the current configuration:\n"
                              "%s" % "\n".join(["  - \"%s\": %s" % (k, str(v)) for k, v in config.box.items()]))
     parser.add_argument('--grades', type=str,
                         help="Path to a csv file to add the grades. Needs columns \"Matricule\" and \"Note\".")
@@ -36,16 +36,20 @@ if __name__ == "__main__":
         args.mpath = os.path.join(args.path, 'moodle')
 
     if args.train:
-        from process_copy import grade
-        grade.train()
+        from process_copy.train import train
+        train()
 
     if args.grade:
-        if args.grade.startswith('('):
-            box = [float(s) for s in args.grade[1:-1].split(',')]
+        from process_copy.grade import grade_all, compare_all, grade_all_exams
+        if args.grade == 'devoir':
+            if args.compare:
+                compare_all(args.path, args.grades, config.box[args.grade])
+            else:
+                grade_all(args.path, args.grades, config.box[args.grade])
+        elif args.grade == 'exam':
+            grade_all_exams(args.path, args.grades, config.box[args.grade])
         else:
-            box = config.box[args.grade]
-        from process_copy import grade
-        grade.grade_all(args.path, args.grades, box, args.compare)
+            raise ValueError("Grade configuration %s hasn't any action defined.")
 
     if args.export:
         from process_copy import mcc
