@@ -126,8 +126,6 @@ def grade_all_exams(path, grades_csv, box, dir_path='', classifier=None, dpi=300
                         cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
             imwrite_png('summary', color_summary)
             sumarries.append(color_summary)
-            if len(sumarries) > 4:
-                break
 
     hmargin = int(pw - max_w) // 2  # horizontal margin
     imgh = max_h+15
@@ -426,9 +424,10 @@ def find_grade_boxes(cropped, add_border=False, max_diff=50, thick=5):
         (x, y, w, h) = cv2.boundingRect(boxes[0])
         if x + y <= 4*thick + 5:
             boxes = boxes[1:]
-        (x, y, w, h) = cv2.boundingRect(boxes[-1])
-        if x + y + h + w >= cropped.shape[0] + cropped.shape[1] - 4*thick - 5:
-            boxes = boxes[:-1]
+        if boxes:
+            (x, y, w, h) = cv2.boundingRect(boxes[-1])
+            if x + y + h + w >= cropped.shape[0] + cropped.shape[1] - 4*thick - 5:
+                boxes = boxes[:-1]
     # add any missing box
     if boxes:
         prev = None
