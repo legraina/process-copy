@@ -44,10 +44,15 @@ GREEN = (0,154,23)
 BLACK=(0,0,0)
 
 
-def grade_all_exams(path, grades_csv, box, dir_path='', classifier=None, dpi=300, margin=1):
+def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=300, margin=1):
     # loading our CNN model if needed
     if classifier is None:
         classifier = load_model('digit_recognizer.h5')
+
+    # check if the folder for grade exists if any
+    d = grades_prefix.rsplit('/', 1)[0]
+    if d and not os.path.exists(d):
+        raise ValueError("The following directory does not exist: "+d)
 
     ph = int(11 * dpi)
     pw = int(8.5*dpi)
@@ -60,30 +65,25 @@ def grade_all_exams(path, grades_csv, box, dir_path='', classifier=None, dpi=300
         else:
             return np.full((h, w), 255, np.uint8)
 
-    # # f = '/Users/legraina/Dropbox (MAGI)/Enseignement/Poly/MTH1102_Calcul_II/Correction du final/Groupe D_1/MTH1102D AUTOMNE 2021 GROUPE 01-4.pdf'
-    # # grays = gray_images(f)
-    # grays = [cv2.cvtColor(cv2.imread('images/page_%d.png' % d), cv2.COLOR_BGR2GRAY) for d in range(23)]
-    # mat = find_matricule(grays[1:], box['matricule'], classifier)
-    # try:
-    #     total_matched, numbers, img = grade(grays[0], box['front']['grade'], classifier, add_border=True)
-    #     if numbers: print("%s: %.2f" % (mat, numbers[-1]))
-    #     # grades_df.at[mat, 'Note'] = numbers[-1]
-    #     else: print(Fore.GREEN + "%s: No valid grade" % mat + Style.RESET_ALL)
+    # f = '/Users/legraina/Dropbox (MAGI)/Enseignement/Poly/MTH1102_Calcul_II/Correction du final/Groupe D_2/MTH1102D AUTOMNE 2021 GROUPE 01-51.pdf'
+    # # grays = [cv2.cvtColor(cv2.imread('images/page_%d.png' % d), cv2.COLOR_BGR2GRAY) for d in range(23)]
+    # grays = gray_images(f)
+    # mat, id_box = find_matricule(grays, box['front']['id'], box['matricule'], classifier)
+    # total_matched, numbers, grades = grade(grays[0], box['front']['grade'], classifier, add_border=True)
 
     # list files and directories
     pmargin = int(margin*dpi)
     max_h = 0
     max_w = 0
     sumarries = []
+    csvf = "Dossier,Fichier,Matricule,Note\n"
     for f in os.listdir(path):
         pf = os.path.join(path, f)
 
         # if directory, grade files inside
         if os.path.isdir(pf):
-            gcsv = grades_csv
-            if not grades_csv.endswith('.csv'):
-                gcsv = grades_csv+f+"_"
-            grade_all_exams(pf, gcsv, box, dir_path+("/" if dir_path else "")+f, classifier)
+            gprefix = grades_prefix+f+"_"
+            grade_all_exams(pf, gprefix, box, dir_path+("/" if dir_path else "")+f, classifier)
             continue
 
         # grade files
@@ -92,14 +92,21 @@ def grade_all_exams(path, grades_csv, box, dir_path='', classifier=None, dpi=300
 
         file = os.path.join(path, f)
         if os.path.isfile(file):
+            csvf += dir_path+","+f+","
             grays = gray_images(file)
             mat, id_box = find_matricule(grays, box['front']['id'], box['matricule'], classifier)
             if not mat:
                 print("No matricule found for %s" % f)
+                csvf += ","
+            else:
+                csvf += mat+","
 
             total_matched, numbers, grades = grade(grays[0], box['front']['grade'], classifier, add_border=True)
             if numbers:
                 print("%s: %.2f" % (f, numbers[-1]))
+                csvf += "%.2f\n" % numbers[-1]
+            else:
+                csvf += "\n"
 
             # put everything in an image
             w = id_box.shape[1] + grades.shape[1] + dpi
@@ -127,6 +134,7 @@ def grade_all_exams(path, grades_csv, box, dir_path='', classifier=None, dpi=300
             imwrite_png('summary', color_summary)
             sumarries.append(color_summary)
 
+
     hmargin = int(pw - max_w) // 2  # horizontal margin
     imgh = max_h+15
     n_s = ph // imgh  # number of pictures by page
@@ -151,8 +159,10 @@ def grade_all_exams(path, grades_csv, box, dir_path='', classifier=None, dpi=300
     imwrite_png("page", page)
     pages.append(Image.fromarray(page))
 
-    # save pdf
-    pages[0].save(grades_csv+"summary.pdf", save_all=True, append_images=pages[1:])
+    # save pdf and grades
+    pages[0].save(grades_prefix+"summary.pdf", save_all=True, append_images=pages[1:])
+    with open(grades_prefix+"notes.csv", 'w') as wf:
+        wf.write(csvf)
 
 
 def grade_all(path, grades_csv, box):
@@ -325,7 +335,7 @@ def imstraighten(gray):
     center, dim, angle = cv2.minAreaRect(coords)
     if angle > 45:
         angle = 90-angle
-    if abs(angle) > 10:
+    if abs(angle) > 3:
         raise ValueError("Current page is too skewed.")
     # rotate the image to deskew it
     (h, w) = gray.shape
@@ -753,5 +763,6 @@ def imwrite_png(name, img, ignore=(sys.gettrace() is None)):
         return
     if img.shape[0] == 0 or img.shape[1] == 0:
         return
-    os.mkdir('images')
+    if not os.path.exists('images'):
+        os.mkdir('images')
     cv2.imwrite("images/%s.png" % name, img)
