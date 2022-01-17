@@ -53,6 +53,38 @@ def copy_files(path, mpath=None):
     print('%d files has been moved and copied to %s.' % (n, mpath))
 
 
+def import_files(dpath, opath, suffix=None):
+    folders = os.listdir(opath)
+    n = 0
+    for f in folders:
+        afolder = os.path.join(opath, f)
+        if os.path.isfile(afolder):
+            continue
+
+        files = os.listdir(afolder)
+        if len(files) != 1:
+            raise ValueError("Subfolder %s does not contain only one file, but %d files." % (f, len(files)))
+        file = files[0]
+
+        # rename it
+        # use folder name
+        _split = f.split('_')
+        name = "_".join(_split[0].split(' '))
+        # extract matricule
+        mat = _split[2]
+        name = name + "_%s_" % mat
+        if suffix:
+            name = name + suffix + ".pdf"
+        else:
+            name = name + file
+
+        # copy file
+        file = os.path.join(afolder, files[0])
+        copy_file(file, os.path.join(dpath, name))
+        n += 1
+    print('%d files has been moved and copied to %s.' % (n, dpath))
+
+
 def zipdirrec(path, ziph):
     # ziph is zipfile handle
     for root, dirs, files in os.walk(path):

@@ -12,7 +12,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Move the copy to moodle folders.',
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('path', type=str, help='path to the devoir folder')
-    parser.add_argument('-i', '--import', default=False, action='store_true',
+    parser.add_argument('-i', '--import', default=False, action='store_true', dest='import_files',
                         help="Import files from moodle directories.")
     parser.add_argument('-e', '--export', default=False, action='store_true',
                         help="Export files from moodle directories.")
@@ -23,9 +23,11 @@ if __name__ == "__main__":
     parser.add_argument('--grades', type=str,
                         help="Path to a csv file to add the grades. Needs columns \"Matricule\" and \"Note\".")
     parser.add_argument('-c', '--compare', default=False, action='store_true',
-                        help="Compare grades found to the ones in the file.")
-    parser.add_argument("-b", "--batch", type=int, help="Compress files by batches.")
+                        help="Compare grades found to the ones in the file provided in the member grades.")
+    parser.add_argument("-b", "--batch", type=int, help="Compress files by batches of the given size.")
     parser.add_argument('-m', '--mpath', type=str, help='path to the moodle folders')
+    parser.add_argument("-s", "--suffix", type=str, help="Replace file name by this value when importing, "
+                                                         "e.g. Devoir1_MTH1102_H22_Gr01.")
     parser.add_argument('-t', '--train', default=False, action='store_true', help='train the CNN on the MNIST dataset')
     args = parser.parse_args()
 
@@ -50,6 +52,10 @@ if __name__ == "__main__":
             grade_all_exams(args.path, args.grades, config.box[args.grade])
         else:
             raise ValueError("Grade configuration %s hasn't any action defined.")
+
+    if args.import_files:
+        from process_copy import mcc
+        mcc.import_files(args.path, args.mpath, args.suffix)
 
     if args.export:
         from process_copy import mcc

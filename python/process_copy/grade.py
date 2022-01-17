@@ -33,7 +33,6 @@ import pandas as pd
 from keras.models import load_model
 from pdf2image import convert_from_path
 from PIL import Image
-from fpdf import FPDF
 
 
 allowed_decimals = ['0', '25', '5', '75']
@@ -42,6 +41,30 @@ re_mat = '[1-2]\\d{6}'
 RED = (225,6,0)
 GREEN = (0,154,23)
 BLACK=(0,0,0)
+
+
+allowed_decimals = ['0', '25', '5', '75']
+len_mat = 7
+re_mat = '[1-2]\\d{6}'
+RED = (225,0,6)
+GREEN = (0,154,23)
+BLACK=(0,0,0)
+
+ph = 0
+pw = 0
+half_dpi = 0
+quarter_dpi = 0
+
+
+def refresh(dpi=300):
+    global ph, pw, half_dpi, quarter_dpi
+    ph = int(11 * dpi)
+    pw = int(8.5 * dpi)
+    half_dpi = int(.5 * dpi)
+    quarter_dpi = int(.25 * dpi)
+
+
+refresh()
 
 
 def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=300, margin=1):
@@ -109,63 +132,22 @@ def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=
                 csvf += "\n"
 
             # put everything in an image
-            w = id_box.shape[1] + grades.shape[1] + dpi
+            sumarry, h, w = create_summary(id_box, grades, mat, numbers, total_matched,
+                                           "%d) %s: %s" % (len(sumarries)+1, dir_path, f), dpi)
+            sumarries.append(sumarry)
             if w > max_w:
                 max_w = w
-            h = max(id_box.shape[0]+dpi, grades.shape[0])
             if h > max_h:
                 max_h = h
-            summary = get_blank_page(h, w)
-            # add id
-            summary[0:id_box.shape[0], 0:id_box.shape[1]] = id_box
-            # add grades
-            summary[0:grades.shape[0], id_box.shape[1]+dpi:w] = grades
-            # write matricule and grade in color
-            color_summary = cv2.cvtColor(summary, cv2.COLOR_GRAY2RGB)
-            cv2.putText(color_summary,  "Matricule: "+(mat if mat else 'N/A'),
-                        (int(2.5*dpi), id_box.shape[0]+half_dpi),  # position at which writing has to start
-                        cv2.FONT_HERSHEY_SIMPLEX, 2,  GREEN if mat else RED, 5)
-            cv2.putText(color_summary, str(numbers[-1]) if numbers else 'N/A',
-                        (id_box.shape[1]+half_dpi, h-half_dpi),  # position at which writing has to start
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if total_matched else RED, 5)
-            cv2.putText(color_summary, "%s: %s" % (dir_path, f),
-                        (quarter_dpi, h-quarter_dpi),  # position at which writing has to start
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
-            imwrite_png('summary', color_summary)
-            sumarries.append(color_summary)
 
-
-    hmargin = int(pw - max_w) // 2  # horizontal margin
-    imgh = max_h+15
-    n_s = ph // imgh  # number of pictures by page
-    vmargin = int(ph - n_s*imgh) // 2
-
-    pages = []
-    page = get_blank_page(dim=3)
-    y = vmargin
-    # put summaries on pages
-    for s in sumarries:
-        # new page if needed
-        if y + s.shape[0] > ph - vmargin:
-            imwrite_png("page", page)
-            pages.append(Image.fromarray(page))
-            page = get_blank_page(dim=3)
-            y = vmargin
-        # add summarry
-        page[y:y+s.shape[0], hmargin:hmargin+s.shape[1]] = s
-        y += s.shape[0]+5  # update cursor
-        page[y:y+2, :] = BLACK
-        y += 7
-    imwrite_png("page", page)
-    pages.append(Image.fromarray(page))
-
-    # save pdf and grades
-    pages[0].save(grades_prefix+"summary.pdf", save_all=True, append_images=pages[1:])
+    # save summary pdf and grades
+    pages = create_whole_summary(sumarries, max_h, max_w, dpi)
+    save_pages(pages, grades_prefix + "summary.pdf")
     with open(grades_prefix+"notes.csv", 'w') as wf:
         wf.write(csvf)
 
 
-def grade_all(path, grades_csv, box):
+def grade_all(path, grades_csv, box, dpi=300):
     # load csv
     grades_df = pd.read_csv(grades_csv, index_col='Matricule')
 
@@ -178,6 +160,9 @@ def grade_all(path, grades_csv, box):
     # numbers = grade(file, box, classifier)
 
     # grade files
+    max_h = 0
+    max_w = 0
+    sumarries = []
     for f in os.listdir(path):
         if not f.endswith('.pdf'):
             continue
@@ -185,19 +170,31 @@ def grade_all(path, grades_csv, box):
         m = re.search(re_mat+'(?=\\D)', f)
         if not m:
             print("Matricule wasn't found in "+f)
+            continue
         m = int(m.group())
 
         file = os.path.join(path, f)
         if os.path.isfile(file):
-            gray = gray_images(file, [0])[0]
-            total_matched, numbers, img = grade(gray, box, classifier)
+            gray = gray_images(file, [0], straighten=False)[0]
+            total_matched, numbers, grades = grade(gray, box, classifier)
             if numbers:
                 print("%s: %.2f" % (f, numbers[-1]))
                 grades_df.at[m, 'Note'] = numbers[-1]
             else:
                 print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
+            sumarry, h, w = create_summary(grades, m, numbers, total_matched, "%d) %s" % (len(sumarries)+1, f), dpi)
+            sumarries.append(sumarry)
+            if w > max_w:
+                max_w = w
+            if h > max_h:
+                max_h = h
+
     # store grades
     grades_df.to_csv(grades_csv)
+    # write summary
+    pages = create_whole_summary(sumarries, max_h, max_w, dpi)
+    gname = grades_csv.split('.')[0]
+    save_pages(pages, gname + "_summary.pdf")
 
 
 def compare_all(path, grades_csv, box):
@@ -255,6 +252,9 @@ def grade(gray, box, classifier=None, add_border=False):
     all_numbers = []
     for b in boxes:
         (x, y, w, h) = cv2.boundingRect(b)
+        if h <= 10 or w <= 10:
+            print("An invalid box number has been found")
+            return False, None, cropped
         box_img = cropped[y + 5:y + h - 5, x + 5:x + w - 5]
         all_numbers.append(test(box_img.copy(), classifier))
 
@@ -296,7 +296,7 @@ def gray_images(fpdf, pages=None, dpi=300, straighten=True):
         images = convert_from_path(fpdf, dpi=dpi)
     else:
         for p in pages:
-            images.append(convert_from_path(fpdf, dpi=dpi, last_page=p+1, first_page=p))
+            images += convert_from_path(fpdf, dpi=dpi, last_page=p+1, first_page=p)
     gray_images = []
     for i, img in enumerate(images):
         np_img = np.array(img)
@@ -527,7 +527,7 @@ def test(gray_img, classifier=None):
     cnts, dot, thresh = find_digit_contours(gray)
 
     # extract digits
-    all_digits = extract_all_digits(cnts, gray, thresh, classifier)
+    all_digits = None # extract_all_digits(cnts, gray, thresh, classifier)
 
     if not all_digits:
         print("No valid number has been found")
@@ -766,3 +766,93 @@ def imwrite_png(name, img, ignore=(sys.gettrace() is None)):
     if not os.path.exists('images'):
         os.mkdir('images')
     cv2.imwrite("images/%s.png" % name, img)
+
+
+def get_blank_page(h=ph, w=pw, dim=None):
+    if dim:
+        return np.full((h, w, dim), 255, np.uint8)
+    else:
+        return np.full((h, w), 255, np.uint8)
+
+
+def create_summary(id_box, grades, mat, numbers, total_matched, name, dpi):
+    w = id_box.shape[1] + grades.shape[1] + dpi
+    h = max(id_box.shape[0] + dpi, grades.shape[0])
+
+    summary = get_blank_page(h, w)
+    # add id
+    summary[0:id_box.shape[0], 0:id_box.shape[1]] = id_box
+    # add grades
+    summary[0:grades.shape[0], id_box.shape[1] + dpi:w] = grades
+    # write matricule and grade in color
+    color_summary = cv2.cvtColor(summary, cv2.COLOR_GRAY2RGB)
+    cv2.putText(color_summary, "Matricule: " + (mat if mat else 'N/A'),
+                (int(2.5 * dpi), id_box.shape[0] + half_dpi),  # position at which writing has to start
+                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if mat else RED, 5)
+    cv2.putText(color_summary, str(numbers[-1]) if numbers else 'N/A',
+                (id_box.shape[1] + half_dpi, h - half_dpi),  # position at which writing has to start
+                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if total_matched else RED, 5)
+    cv2.putText(color_summary, name,
+                (quarter_dpi, h - quarter_dpi),  # position at which writing has to start
+                cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
+    imwrite_png('summary', color_summary)
+    return color_summary, h, w
+
+
+def create_summary(grades, mat, numbers, total_matched, name, dpi):
+    # put everything in an image
+    w = grades.shape[1]
+    h = grades.shape[0]
+
+    summary = get_blank_page(h, w)
+    # add grades
+    summary[0:h, 0:w] = grades
+    # write matricule and grade in color
+    color_summary = cv2.cvtColor(summary, cv2.COLOR_GRAY2RGB)
+    cv2.putText(color_summary, "Matricule: " + (str(mat) if mat else 'N/A'),
+                (quarter_dpi, h - half_dpi),  # position at which writing has to start
+                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if mat else RED, 5)
+    cv2.putText(color_summary, str(numbers[-1]) if numbers else 'N/A',
+                (w - dpi, h - half_dpi),  # position at which writing has to start
+                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if total_matched else RED, 5)
+    cv2.putText(color_summary, name,
+                (quarter_dpi, h - quarter_dpi),  # position at which writing has to start
+                cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
+    imwrite_png('summary', color_summary)
+    return color_summary, h, w
+
+
+def create_whole_summary(sumarries, max_h, max_w, dpi):
+    hmargin = int(pw - max_w) // 2  # horizontal margin
+    imgh = max_h + 15
+    n_s = ph // imgh  # number of pictures by page
+    vmargin = int(ph - n_s * imgh) // 2
+
+    pages = []
+    page = get_blank_page(dim=3)
+    y = vmargin
+    # put summaries on pages
+    for s in sumarries:
+        # new page if needed
+        if y + s.shape[0] > ph - vmargin:
+            # store current page
+            imwrite_png("page", page)
+            pages.append(page)
+            # create new one
+            page = get_blank_page(dim=3)
+            y = vmargin
+        # add summarry
+        page[y:y + s.shape[0], hmargin:hmargin + s.shape[1]] = s
+        y += s.shape[0] + 5  # update cursor
+        page[y:y + 2, :] = BLACK
+        y += 7
+    # store current page
+    imwrite_png("page", page)
+    pages.append(page)
+
+    return pages
+
+
+def save_pages(pages, fname):
+    images = [Image.fromarray(p) for p in pages]
+    images[0].save(fname, save_all=True, append_images=images[1:])
