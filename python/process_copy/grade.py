@@ -42,14 +42,6 @@ RED = (225,6,0)
 GREEN = (0,154,23)
 BLACK=(0,0,0)
 
-
-allowed_decimals = ['0', '25', '5', '75']
-len_mat = 7
-re_mat = '[1-2]\\d{6}'
-RED = (225,0,6)
-GREEN = (0,154,23)
-BLACK=(0,0,0)
-
 ph = 0
 pw = 0
 half_dpi = 0
@@ -171,7 +163,7 @@ def grade_all(path, grades_csv, box, dpi=300):
         if not m:
             print("Matricule wasn't found in "+f)
             continue
-        m = int(m.group())
+        m = m.group()
 
         file = os.path.join(path, f)
         if os.path.isfile(file):
@@ -527,7 +519,7 @@ def test(gray_img, classifier=None):
     cnts, dot, thresh = find_digit_contours(gray)
 
     # extract digits
-    all_digits = None # extract_all_digits(cnts, gray, thresh, classifier)
+    all_digits = extract_all_digits(cnts, gray, thresh, classifier)
 
     if not all_digits:
         print("No valid number has been found")
@@ -720,7 +712,7 @@ def process_digits_combinations(all_digits, dot):
     numbers = []
     for p, digits in combinations:
         number = extract_number(digits, dot)
-        if number:
+        if number is not None:
             numbers.append((p / len(digits), number))
     return numbers
 
