@@ -85,16 +85,6 @@ def import_files(dpath, opath, suffix=None):
     print('%d files has been moved and copied to %s.' % (n, dpath))
 
 
-def zipdirrec(path, ziph):
-    # ziph is zipfile handle
-    for root, dirs, files in os.walk(path):
-        for file in files:
-            pfile = os.path.join(root, file)
-            ziph.write(pfile, os.path.relpath(pfile, os.path.join(path, '..')))
-        for dir in dirs:
-            zipdirrec(os.path.join(path, dir), ziph)
-
-
 def zipdirbatch(path, archive='moodle', batch=None):
     # ziph is zipfile handle
     i = 0
@@ -103,8 +93,9 @@ def zipdirbatch(path, archive='moodle', batch=None):
     ziph = zipfile.ZipFile(narchive+'.zip', 'w', zipfile.ZIP_DEFLATED)
     print("Compressing ", end="", flush=True)
     for root, dirs, files in os.walk(path):
-        for dir in dirs:
-            zipdirrec(os.path.join(path, dir), ziph)
+        for file in files:
+            pfile = os.path.join(root, file)
+            ziph.write(pfile, os.path.relpath(pfile, path))
             i = i + 1
             if batch and i % batch == 0:
                 print('\nArchive %s.zip created.' % narchive)
