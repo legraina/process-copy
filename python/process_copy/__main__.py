@@ -42,7 +42,7 @@ if __name__ == "__main__":
             if not args.mpath.startswith('/'):
                 args.mpath = os.path.join(args.root, args.mpath)
         else:
-            args.mpath = os.path.join(args.path, 'moodle')
+            args.mpath = os.path.join(args.root, 'moodle')
     else:
         args.path = os.path.abspath(args.path)
         if args.grades:
@@ -75,4 +75,4 @@ if __name__ == "__main__":
     if args.export:
         from process_copy import mcc
         mcc.copy_files(args.path, args.mpath)
-        mcc.zipdirbatch(args.mpath, batch=args.batch)
+        mcc.zipdirbatch(args.mpath, archive=args.mpath, batch=args.batch)

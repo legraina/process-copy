@@ -24,6 +24,9 @@ import os
 import shutil
 import glob
 import zipfile
+import re
+
+from process_copy.config import re_mat
 
 
 def copy_file(file, folder):
@@ -38,8 +41,17 @@ def copy_files(path, mpath=None):
         file = os.path.join(path, f)
         if os.path.isfile(file):
             try:
-                matricule = f.split('_')[2]
+                # search matricule
+                m = re.search(re_mat, f)
+                if not m:
+                    print("Matricule wasn't found in " + f)
+                    continue
+                matricule = m.group()
             except IndexError:
+                continue
+            except StopIteration as e:
+                if f.endswith('.pdf'):
+                    print("Matricule wasn't found in " + f)
                 continue
             # find moodle folder
             folder = next(fd for fd in moodle_folders if matricule in fd)
@@ -54,6 +66,8 @@ def copy_files(path, mpath=None):
 
 
 def import_files(dpath, opath, suffix=None):
+    if not os.path.exists(dpath):
+        os.mkdir(dpath)
     folders = os.listdir(opath)
     n = 0
     for f in folders:

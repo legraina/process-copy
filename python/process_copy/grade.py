@@ -33,11 +33,12 @@ import pandas as pd
 from keras.models import load_model
 from pdf2image import convert_from_path
 from PIL import Image
+from datetime import datetime
+from process_copy.config import re_mat
 
 
 allowed_decimals = ['0', '25', '5', '75']
 len_mat = 7
-re_mat = '[1-2]\\d{6}'
 RED = (225,6,0)
 GREEN = (0,154,23)
 BLACK=(0,0,0)
@@ -59,7 +60,9 @@ def refresh(dpi=300):
 refresh()
 
 
-def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=300, margin=1):
+def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=300, margin=1, shape=(8.5,11)):
+    shape = (int(dpi * shape[0]), int(dpi * shape[1]))
+
     # loading our CNN model if needed
     if classifier is None:
         classifier = load_model('digit_recognizer.h5')
@@ -82,7 +85,7 @@ def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=
 
     # f = '/Users/legraina/Dropbox (MAGI)/Enseignement/Poly/MTH1102_Calcul_II/Correction du final/Groupe D_2/MTH1102D AUTOMNE 2021 GROUPE 01-51.pdf'
     # # grays = [cv2.cvtColor(cv2.imread('images/page_%d.png' % d), cv2.COLOR_BGR2GRAY) for d in range(23)]
-    # grays = gray_images(f)
+    # grays = gray_images(f, shape=shape)
     # mat, id_box = find_matricule(grays, box['front']['id'], box['matricule'], classifier)
     # total_matched, numbers, grades = grade(grays[0], box['front']['grade'], classifier, add_border=True)
 
@@ -108,7 +111,10 @@ def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=
         file = os.path.join(path, f)
         if os.path.isfile(file):
             csvf += dir_path+","+f+","
-            grays = gray_images(file)
+            grays = gray_images(file, shape=shape)
+            if grays is None:
+                print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+                continue
             mat, id_box = find_matricule(grays, box['front']['id'], box['matricule'], classifier)
             if not mat:
                 print("No matricule found for %s" % f)
@@ -139,7 +145,9 @@ def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=
         wf.write(csvf)
 
 
-def grade_all(path, grades_csv, box, dpi=300):
+def grade_all(path, grades_csv, box, dpi=300, shape=(8.5,11)):
+    shape = (int(dpi * shape[0]), int(dpi * shape[1]))
+
     # load csv
     grades_df = pd.read_csv(grades_csv, index_col='Matricule')
 
@@ -155,11 +163,13 @@ def grade_all(path, grades_csv, box, dpi=300):
     max_h = 0
     max_w = 0
     sumarries = []
+    dt = get_date()
+    trim = box['trim'] if 'trim' in box else None
     for f in os.listdir(path):
         if not f.endswith('.pdf'):
             continue
         # search matricule
-        m = re.search(re_mat+'(?=\\D)', f)
+        m = re.search(re_mat, f)
         if not m:
             print("Matricule wasn't found in "+f)
             continue
@@ -167,15 +177,20 @@ def grade_all(path, grades_csv, box, dpi=300):
 
         file = os.path.join(path, f)
         if os.path.isfile(file):
-            gray = gray_images(file, [0], straighten=False)[0]
-            total_matched, numbers, grades = grade(gray, box, classifier)
+            grays = gray_images(file, [0], straighten=False, shape=shape)
+            if grays is None:
+                print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+                continue
+            gray = grays[0]
+            total_matched, numbers, grades = grade(gray, box['grade'], classifier=classifier, trim=trim)
             if numbers:
                 print("%s: %.2f" % (f, numbers[-1]))
                 grades_df.at[m, 'Note'] = numbers[-1]
+                grades_df.at[m, 'Dernière modification (note)'] = dt
             else:
                 print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
             sumarry, h, w = create_summary(grades, m, numbers, total_matched, "%d) %s" % (len(sumarries)+1, f), dpi)
-            sumarries.append(sumarry)
+            sumarries.append((int(m), sumarry))
             if w > max_w:
                 max_w = w
             if h > max_h:
@@ -184,12 +199,15 @@ def grade_all(path, grades_csv, box, dpi=300):
     # store grades
     grades_df.to_csv(grades_csv)
     # write summary
+    sumarries = [s for (mat, s) in sorted(sumarries)]
     pages = create_whole_summary(sumarries, max_h, max_w, dpi)
     gname = grades_csv.split('.')[0]
     save_pages(pages, gname + "_summary.pdf")
 
 
-def compare_all(path, grades_csv, box):
+def compare_all(path, grades_csv, box, dpi=300, shape=(8.5, 11)):
+    shape = (int(dpi * shape[0]), int(dpi * shape[1]))
+
     # load csv
     grades_df = pd.read_csv(grades_csv, index_col='Matricule')
 
@@ -214,7 +232,11 @@ def compare_all(path, grades_csv, box):
 
         file = os.path.join(path, f)
         if os.path.isfile(file):
-            gray = gray_images(file, [0])[0]
+            grays = gray_images(file, [0], straighten=False, shape=shape)
+            if grays is None:
+                print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+                continue
+            gray = grays[0]
             total_matched, numbers = grade(gray, box, classifier)
             if numbers:
                 print("%s: %.2f" % (f, numbers[-1]))
@@ -238,17 +260,24 @@ def compare_all(path, grades_csv, box):
           % ((tp+tpp) / n, tp / n, tpp / n, (tp+tpp) / (tp+tpp+fp+fpp), tp / (tp+fp), tpp / (tpp+fpp)))
 
 
-def grade(gray, box, classifier=None, add_border=False):
+def grade(gray, box, classifier=None, add_border=False, trim=None):
     cropped = fetch_box(gray, box)
     boxes = find_grade_boxes(cropped, add_border)
     all_numbers = []
-    for b in boxes:
+    for i, b in enumerate(boxes):
         (x, y, w, h) = cv2.boundingRect(b)
         if h <= 10 or w <= 10:
             print("An invalid box number has been found")
             return False, None, cropped
         box_img = cropped[y + 5:y + h - 5, x + 5:x + w - 5]
-        all_numbers.append(test(box_img.copy(), classifier))
+        # check if need to trim
+        n_trim = None
+        if trim:
+            for (j, n) in trim:
+                if i == j or i == len(boxes) + j:
+                    n_trim = n
+                    break
+        all_numbers.append(test(box_img.copy(), classifier, trim=n_trim))
 
     if len(all_numbers) == 0:
         print("No valid number has been found")
@@ -281,14 +310,23 @@ def grade(gray, box, classifier=None, add_border=False):
     return False, [n for p, n in expected_numbers[:-1]] + [nt if pt >= p else total], cropped
 
 
-def gray_images(fpdf, pages=None, dpi=300, straighten=True):
+def gray_images(fpdf, pages=None, dpi=300, straighten=True, shape=None):
+    # shape: width, height
     # fpdf: path to pdf file to grade
     images = []
     if pages is None:
-        images = convert_from_path(fpdf, dpi=dpi)
+        try:
+            images = convert_from_path(fpdf, dpi=dpi)
+        except Image.DecompressionBombError as e:
+            print("Decompression issue for %s." % fpdf)
+            return None
     else:
         for p in pages:
-            images += convert_from_path(fpdf, dpi=dpi, last_page=p+1, first_page=p)
+            try:
+                images += convert_from_path(fpdf, dpi=dpi, last_page=p+1, first_page=p)
+            except Image.DecompressionBombError as e:
+                print("Decompression issue on page %d for %s." % (p, fpdf))
+                return None
     gray_images = []
     for i, img in enumerate(images):
         np_img = np.array(img)
@@ -298,6 +336,11 @@ def gray_images(fpdf, pages=None, dpi=300, straighten=True):
                 gray = imstraighten(gray)
             except ValueError as e:
                 print("For page %d: %s" % (i, str(e)))
+        if shape:
+            if abs(gray.shape[0] - shape[1]) > .1 * shape[1] \
+                    or abs(gray.shape[1] - shape[0]) > .1 * shape[0]:
+                print("Resizing %s, wrong format: %.1f by %.1f in." % (fpdf, gray.shape[0]/dpi, gray.shape[1]/dpi))
+                gray = cv2.resize(gray, shape, interpolation=cv2.INTER_LINEAR)
         imwrite_png("page_%d" % i, gray)
         gray_images.append(gray)
     return gray_images
@@ -506,7 +549,7 @@ def find_matricule(grays, box_id, box_mat, classifier):
     return None, id_box
 
 
-def test(gray_img, classifier=None):
+def test(gray_img, classifier=None, trim=None):
     if classifier is None:
         classifier = load_model('digit_recognizer.h5')
 
@@ -516,7 +559,7 @@ def test(gray_img, classifier=None):
 
     # find contours of the numbers as well as the dot number position
     # return a sorted list of the relevant digits' contours and the dot position (and the threshold image used)
-    cnts, dot, thresh = find_digit_contours(gray)
+    cnts, dot, thresh = find_digit_contours(gray, trim=trim)
 
     # extract digits
     all_digits = extract_all_digits(cnts, gray, thresh, classifier)
@@ -556,7 +599,7 @@ def biggest_children(cnts, hierarchy, parent_positon):
     return sorted(scnts, key=cv2.contourArea, reverse=True)
 
 
-def find_digit_contours(gray, split_on_semi_column=True, min_box_before_split=0, max_cnts=None):
+def find_digit_contours(gray, split_on_semi_column=True, min_box_before_split=0, max_cnts=None, trim=None):
     # threshold the gray image, then apply a series of morphological
     # operations to cleanup the thresholded image
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -576,12 +619,14 @@ def find_digit_contours(gray, split_on_semi_column=True, min_box_before_split=0,
     imwrite_contours("rgray", gray, cnts)
 
     # clean cnts
-    scnts, dot = clean_and_sort_digit_contours(cnts, gray, split_on_semi_column, min_box_before_split, max_cnts)
+    scnts, dot = clean_and_sort_digit_contours(
+        cnts, gray, split_on_semi_column, min_box_before_split, max_cnts, trim=trim)
 
     return scnts, dot, thresh
 
 
-def clean_and_sort_digit_contours(cnts, gray=None, split_on_semi_column=True, min_box_before_split=0, max_cnts=None):
+def clean_and_sort_digit_contours(cnts, gray=None, split_on_semi_column=True,
+                                  min_box_before_split=0, max_cnts=None, trim=None):
     # remove thin contours
     ccnts = []
     max_h = 0
@@ -613,6 +658,10 @@ def clean_and_sort_digit_contours(cnts, gray=None, split_on_semi_column=True, mi
         (x, y, w, h) = cv2.boundingRect(c)
         scnts.append((x + w/2, w, c))
     scnts = sorted(scnts, key=lambda t: t[0])
+
+    # trim if needed
+    if trim and len(scnts) > trim:
+        scnts = scnts[:-trim]
 
     if gray is not None:
         imwrite_contours("rgray_all", gray, [c[-1] for c in scnts])
@@ -848,3 +897,11 @@ def create_whole_summary(sumarries, max_h, max_w, dpi):
 def save_pages(pages, fname):
     images = [Image.fromarray(p) for p in pages]
     images[0].save(fname, save_all=True, append_images=images[1:])
+
+
+def get_date():
+    # datetime object containing current date and time
+    now = datetime.now()
+
+    # dimanche 23 janvier 2022, 23:42
+    return now.strftime("%A %d %B %Y, %H:%M")
