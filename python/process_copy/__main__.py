@@ -24,7 +24,8 @@ if __name__ == "__main__":
                         help="Path to a csv file to add the grades. Needs columns \"Matricule\" and \"Note\".")
     parser.add_argument('-c', '--compare', default=False, action='store_true',
                         help="Compare grades found to the ones in the file provided in the member grades.")
-    parser.add_argument("-b", "--batch", type=int, help="Compress files by batches of the given size.")
+    parser.add_argument("-b", "--batch", type=int,
+                        help="Compress files by batches of the given size in Mb. Dafault: no batch.")
     parser.add_argument('-m', '--mpath', type=str, help='path to the moodle folders')
     parser.add_argument('-r', '--root', type=str, help='root path to add to all input paths')
     parser.add_argument("-s", "--suffix", type=str, help="Replace file name by this value when importing, "

@@ -29,6 +29,9 @@ import re
 from process_copy.config import re_mat
 
 
+MB = 2**20
+
+
 def copy_file(file, folder):
     shutil.copy(file, folder)
 
@@ -105,17 +108,21 @@ def zipdirbatch(path, archive='moodle', batch=None):
     j = 0
     narchive = archive
     ziph = zipfile.ZipFile(narchive+'.zip', 'w', zipfile.ZIP_DEFLATED)
+    asize = 0  # archive size
     print("Compressing ", end="", flush=True)
     for root, dirs, files in os.walk(path):
         for file in files:
-            pfile = os.path.join(root, file)
-            ziph.write(pfile, os.path.relpath(pfile, path))
             i = i + 1
-            if batch and i % batch == 0:
+            pfile = os.path.join(root, file)
+            ziph.write(pfile, os.path.relpath(pfile, path))  # add the file to the zip
+            mbs = os.path.getsize(pfile) / MB  # file size in Mb
+            asize += mbs
+            if batch and asize >= batch:
                 print('\nArchive %s.zip created.' % narchive)
                 j = j + 1
                 narchive = "%s%d" % (archive, j)
                 ziph = zipfile.ZipFile(narchive + '.zip', 'w', zipfile.ZIP_DEFLATED)
+                asize = 0
                 print("Compressing ", end="", flush=True)
             else:
                 print(".", end="" if i % 65 else "\nCompressing ", flush=True)
