@@ -267,7 +267,7 @@ def grade(gray, box, classifier=None, add_border=False, trim=None):
     for i, b in enumerate(boxes):
         (x, y, w, h) = cv2.boundingRect(b)
         if h <= 10 or w <= 10:
-            print("An invalid box number has been found")
+            print("An invalid box number has been found (too small or too thin)")
             return False, None, cropped
         box_img = cropped[y + 5:y + h - 5, x + 5:x + w - 5]
         # check if need to trim
