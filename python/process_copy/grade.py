@@ -131,7 +131,7 @@ def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=
 
             # put everything in an image
             sumarry, h, w = create_summary(id_box, grades, mat, numbers, total_matched,
-                                           "%d) %s: %s" % (len(sumarries)+1, dir_path, f), dpi)
+                                           "%s: %s" % (dir_path, f), dpi)
             sumarries.append(sumarry)
             if w > max_w:
                 max_w = w
@@ -189,7 +189,7 @@ def grade_all(path, grades_csv, box, dpi=300, shape=(8.5,11)):
                 grades_df.at[m, 'Dernière modification (note)'] = dt
             else:
                 print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
-            sumarry, h, w = create_summary(grades, m, numbers, total_matched, "%d) %s" % (len(sumarries)+1, f), dpi)
+            sumarry, h, w = create_summary(grades, m, numbers, total_matched, f, dpi)
             sumarries.append((int(m), sumarry))
             if w > max_w:
                 max_w = w
