@@ -75,5 +75,5 @@ if __name__ == "__main__":
 
     if args.export:
         from process_copy import mcc
-        mcc.copy_files(args.path, args.mpath)
+        mcc.copy_files(args.path, args.mpath, args.grades)
         mcc.zipdirbatch(args.mpath, archive=args.mpath, batch=args.batch)

@@ -25,6 +25,7 @@ import shutil
 import glob
 import zipfile
 import re
+import pandas as pd
 
 from process_copy.config import re_mat
 
@@ -33,12 +34,15 @@ MB = 2**20
 
 
 def copy_file(file, folder):
+    if not os.path.exists(folder):
+        os.makedirs(folder)
     shutil.copy(file, folder)
 
 
-def copy_files(path, mpath=None):
+def copy_files(path, mpath=None, grades_csv=None):
     files = os.listdir(path)
-    moodle_folders = os.listdir(mpath)
+    grades_df = pd.read_csv(grades_csv, index_col='Matricule') if grades_csv is not None else None
+    moodle_folders = os.listdir(mpath) if grades_csv is None else None
     n = 0
     for f in files:
         file = os.path.join(path, f)
@@ -49,7 +53,7 @@ def copy_files(path, mpath=None):
                 if not m:
                     print("Matricule wasn't found in " + f)
                     continue
-                matricule = m.group()
+                mat = m.group()
             except IndexError:
                 continue
             except StopIteration as e:
@@ -57,7 +61,17 @@ def copy_files(path, mpath=None):
                     print("Matricule wasn't found in " + f)
                 continue
             # find moodle folder
-            folder = next(fd for fd in moodle_folders if matricule in fd)
+            # rebuild moodle folder name: "Nom complet_Identifiant_Matricule_assignsubmission_file_"
+            if grades_df is not None:
+                participant = grades_df.at[mat, 'Identifiant']
+                m = re.search('\\d+', participant)
+                if not m:
+                    print("Moodle participant id not found in " + participant)
+                    continue
+                m_id = m.group()
+                folder = "%s_%s_%s_assignsubmission_file_" % (grades_df.at[mat, 'Nom complet'], m_id, mat)
+            else:
+                folder = next(fd for fd in moodle_folders if mat in fd)
             # copy file
             folder = os.path.join(mpath, folder)
             folder_files = glob.glob(folder+"/*")
