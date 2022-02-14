@@ -15,3 +15,8 @@ box = {
     }
 }
 
+latex = {
+    'cmd': "pdflatex",
+    'input-file': 'data.tex',
+    'input': "\\renewcommand{\\nom}{%s}\n\\renewcommand{\\matricule}{%s}"
+}

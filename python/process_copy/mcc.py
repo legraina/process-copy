@@ -22,12 +22,15 @@
 
 import os
 import shutil
+import subprocess
 import glob
 import zipfile
 import re
 import pandas as pd
+import unidecode
+from PyPDF2 import PdfFileMerger
 
-from process_copy.config import re_mat
+from process_copy.config import re_mat, latex
 
 
 MB = 2**20
@@ -82,7 +85,7 @@ def copy_files(path, mpath=None, grades_csv=None):
     print('%d files has been moved and copied to %s.' % (n, mpath))
 
 
-def import_files(dpath, opath, suffix=None):
+def import_files(dpath, opath, suffix=None, latex_front_page=None):
     if not os.path.exists(dpath):
         os.mkdir(dpath)
     folders = os.listdir(opath)
@@ -109,9 +112,19 @@ def import_files(dpath, opath, suffix=None):
         else:
             name = name + file
 
-        # copy file
-        file = os.path.join(afolder, files[0])
-        copy_file(file, os.path.join(dpath, name))
+        file = os.path.join(afolder, files[0])  # origin file
+        dfile = os.path.join(dpath, name)  # destination file
+        # add front page if any
+        if latex_front_page:
+            f_page = create_front_page(latex_front_page, _split[0], mat)
+            merger = PdfFileMerger()
+            merger.append(f_page)
+            merger.append(file)
+            merger.write(dfile)
+            merger.close()
+        else:
+            # copy file
+            copy_file(file, dfile)
         n += 1
     print('%d files has been moved and copied to %s.' % (n, dpath))
 
@@ -141,3 +154,37 @@ def zipdirbatch(path, archive='moodle', batch=None):
             else:
                 print(".", end="" if i % 65 else "\nCompressing ", flush=True)
     print('\nArchive %s.zip created.' % narchive)
+
+
+def create_front_page(latex_file, name, matricule, latex_input_file=None, tmp_dir='tmp/'):
+    tmp_dir = os.path.abspath(tmp_dir)
+    if not os.path.exists(tmp_dir):
+        os.makedirs(tmp_dir)
+
+    # define default input file
+    if latex_input_file is None:
+        latex_input_file = os.path.join(tmp_dir, latex['input-file'])
+    # remove ascents
+    no_accent_name = unidecode.unidecode(name)
+    # write the input file
+    input_data = latex['input'] % (no_accent_name, matricule)
+    with open(latex_input_file, "w") as f:
+        f.write(input_data)
+
+    # compile latex file
+    current = os.getcwd()
+    os.chdir(tmp_dir)
+    flog = 'stdout.log'
+    with open(flog, 'w') as fstdout:
+        try:
+            subprocess.check_call([latex['cmd'], latex_file], stdout=fstdout, timeout=1)
+        except subprocess.TimeoutExpired:
+            with open(flog) as f:
+                print(f.read())
+            raise ChildProcessError("Subprocess latex time out after 1 second.")
+    os.chdir(current)
+
+    # return path to pdf
+    fname = os.path.basename(latex_file)
+    fpdf = fname.rsplit('.', 1)[0]+'.pdf'
+    return os.path.join(tmp_dir, fpdf)

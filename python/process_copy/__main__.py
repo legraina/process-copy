@@ -30,8 +30,14 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--root', type=str, help='root path to add to all input paths')
     parser.add_argument("-s", "--suffix", type=str, help="Replace file name by this value when importing, "
                                                          "e.g. Devoir1_MTH1102_H22_Gr01.")
+    parser.add_argument("-f", "--frontpage", type=str,
+                        help="Use the given latex file, fill it with the name and matricule, "
+                             "then add it as a front page.")
     parser.add_argument('-t', '--train', default=False, action='store_true', help='train the CNN on the MNIST dataset')
     args = parser.parse_args()
+
+    if args.frontpage:
+        args.frontpage = os.path.abspath(args.frontpage)
 
     if args.root:
         args.root = os.path.abspath(args.root)
@@ -71,7 +77,7 @@ if __name__ == "__main__":
 
     if args.import_files:
         from process_copy import mcc
-        mcc.import_files(args.path, args.mpath, args.suffix)
+        mcc.import_files(args.path, args.mpath, suffix=args.suffix, latex_front_page=args.frontpage)
 
     if args.export:
         from process_copy import mcc

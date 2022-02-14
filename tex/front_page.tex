@@ -1,0 +1,127 @@
+%------------------------------------%
+%                                    %
+% Fichier devoir mth1101                   %
+% 													         %
+% Date: 2 juillet 2007      				 %
+%                                    %
+% Auteur: Jean Guerin                %
+%                                    %
+%------------------------------------%
+
+\documentclass[10pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[english,french]{babel}
+\usepackage{fancybox}
+
+% commandes pour personnaliser la page de couverture
+\newcommand{\cours}{MTH1102 / MTH1102H - Calcul II}
+\newcommand{\session}{Hiver 2022}
+\newcommand{\devoir}{Devoir 5}
+
+% nom et matricule sont redéfinis dans le fichier data.tex
+% Sera utilisé par le programme python
+\newcommand{\nom}{}
+\newcommand{\matricule}{}
+
+% mise en page %
+\setlength{\parindent}{0cm}
+\renewcommand{\baselinestretch}{1}
+\usepackage{geometry}
+\geometry{letterpaper, tmargin=2cm, bmargin=2.0cm, lmargin=2.25cm, rmargin=2.25cm, headsep=1.0cm}
+
+\usepackage[usenames]{color}
+\definecolor{gris1}{gray}{0.75}
+
+\newcommand{\encadre}[1]{
+\setlength\fboxsep{5mm}\setlength\fboxrule{1pt}
+\begin{center}
+\fcolorbox{black}{gris1}{
+\begin{minipage}{0.94\textwidth}{#1}\end{minipage}}
+\end{center}}
+
+% encadre blanc
+\newcommand{\boite}[1]{
+\setlength\fboxsep{5mm}\setlength\fboxrule{1pt}
+\begin{center}
+\fcolorbox{black}{white}{
+\begin{minipage}{0.5\textwidth}{#1}\end{minipage}}
+\end{center}}
+
+
+\begin{document}
+
+\thispagestyle{empty}
+
+\encadre{
+\begin{center}
+\bf
+{\Large \scshape 
+Polytechnique Montr\'eal
+\\
+D\'epartement de Math\'ematiques et de G\'enie Industriel
+}
+\\
+{\Huge
+\
+
+\cours
+\\
+\session
+
+\
+
+\devoir
+
+}
+\end{center}
+}
+
+{
+\centering
+
+\vfill
+
+\input{data}
+
+\fcolorbox{black}{white}{
+\begin{minipage}{0.94\linewidth}
+
+\vspace{5mm}
+
+{\Large
+{\bf Nom et Prénom: }\nom
+
+\vspace{8mm}
+
+{\bf Matricule : }\matricule
+}
+
+%\vspace{8mm}
+%
+%{\bf \Large Signature: }\rule[-1mm]{126mm}{0.6pt}
+%
+%
+%\vspace{5mm}
+
+\end{minipage}}
+
+\vfill
+
+{
+\renewcommand{\arraystretch}{1.5}
+\begin{center}
+\begin{tabular}{|c|c|c||c|} \hline
+{\bf \Large Question}							& {\bf \Large Autres}			& 	{\bf \Large Bonus}	&  \\ 
+{\bf \Large corrig\'ee}						& {\bf \Large  questions}	&		{\bf \Large \LaTeX}	& {\bf \Large Total} \\ \hline
+\hspace{20mm}			{\Huge \strut}	& \hspace{20mm}						&		\hspace{20mm}				&\hspace{20mm} \\
+\hspace{20mm}			{\Huge \strut}	& \hspace{20mm}						&		\hspace{20mm} 			& \hspace{20mm} {\Large /10} \\ \hline
+\end{tabular}
+\end{center}
+}
+
+
+\vfill
+}
+
+\end{document}
