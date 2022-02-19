@@ -42,46 +42,45 @@ def copy_file(file, folder):
     shutil.copy(file, folder)
 
 
-def copy_files(path, mpath=None, grades_csv=None):
-    files = os.listdir(path)
+def copy_files_for_moodle(path, mpath=None, grades_csv=None):
     grades_df = pd.read_csv(grades_csv, index_col='Matricule') if grades_csv is not None else None
     moodle_folders = os.listdir(mpath) if grades_csv is None else None
     n = 0
-    for f in files:
-        file = os.path.join(path, f)
-        if os.path.isfile(file):
-            try:
-                # search matricule
-                m = re.search(re_mat, f)
-                if not m:
+    for root, dirs, files in os.walk(path):
+        for f in files:
+            file = os.path.join(root, f)
+            if os.path.isfile(file) and f.endswith('.pdf'):
+                try:
+                    # search matricule
+                    m = re.search(re_mat, f)
+                    if not m:
+                        print("Matricule wasn't found in " + f)
+                        continue
+                    mat = m.group()
+                except IndexError:
+                    continue
+                except StopIteration as e:
                     print("Matricule wasn't found in " + f)
                     continue
-                mat = m.group()
-            except IndexError:
-                continue
-            except StopIteration as e:
-                if f.endswith('.pdf'):
-                    print("Matricule wasn't found in " + f)
-                continue
-            # find moodle folder
-            # rebuild moodle folder name: "Nom complet_Identifiant_Matricule_assignsubmission_file_"
-            if grades_df is not None:
-                participant = grades_df.at[mat, 'Identifiant']
-                m = re.search('\\d+', participant)
-                if not m:
-                    print("Moodle participant id not found in " + participant)
-                    continue
-                m_id = m.group()
-                folder = "%s_%s_%s_assignsubmission_file_" % (grades_df.at[mat, 'Nom complet'], m_id, mat)
-            else:
-                folder = next(fd for fd in moodle_folders if mat in fd)
-            # copy file
-            folder = os.path.join(mpath, folder)
-            folder_files = glob.glob(folder+"/*")
-            for f2 in folder_files:
-                os.remove(f2)
-            copy_file(file, os.path.join(mpath, folder))
-            n += 1
+                # find moodle folder
+                # rebuild moodle folder name: "Nom complet_Identifiant_Matricule_assignsubmission_file_"
+                if grades_df is not None:
+                    participant = grades_df.at[mat, 'Identifiant']
+                    m = re.search('\\d+', participant)
+                    if not m:
+                        print("Moodle participant id not found in " + participant)
+                        continue
+                    m_id = m.group()
+                    folder = "%s_%s_%s_assignsubmission_file_" % (grades_df.at[mat, 'Nom complet'], m_id, mat)
+                else:
+                    folder = next(fd for fd in moodle_folders if mat in fd)
+                # copy file
+                folder = os.path.join(mpath, folder)
+                folder_files = glob.glob(folder+"/*")
+                for f2 in folder_files:
+                    os.remove(f2)
+                copy_file(file, os.path.join(mpath, folder))
+                n += 1
     print('%d files has been moved and copied to %s.' % (n, mpath))
 
 
@@ -101,7 +100,7 @@ def import_files(dpath, opath, suffix=None, latex_front_page=None):
         file = files[0]
 
         # rename it
-        # use folder name
+        # use folder name: "Nom complet_Identifiant_Matricule_assignsubmission_file_"
         _split = f.split('_')
         name = "_".join(_split[0].split(' '))
         # extract matricule

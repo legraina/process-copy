@@ -72,25 +72,7 @@ def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=
     if d and not os.path.exists(d):
         raise ValueError("The following directory does not exist: "+d)
 
-    ph = int(11 * dpi)
-    pw = int(8.5*dpi)
-    half_dpi = int(.5 * dpi)
-    quarter_dpi = int(.25 * dpi)
-
-    def get_blank_page(h=ph, w=pw, dim=None):
-        if dim:
-            return np.full((h, w, dim), 255, np.uint8)
-        else:
-            return np.full((h, w), 255, np.uint8)
-
-    # f = '/Users/legraina/Dropbox (MAGI)/Enseignement/Poly/MTH1102_Calcul_II/Correction du final/Groupe D_2/MTH1102D AUTOMNE 2021 GROUPE 01-51.pdf'
-    # # grays = [cv2.cvtColor(cv2.imread('images/page_%d.png' % d), cv2.COLOR_BGR2GRAY) for d in range(23)]
-    # grays = gray_images(f, shape=shape)
-    # mat, id_box = find_matricule(grays, box['front']['id'], box['matricule'], classifier)
-    # total_matched, numbers, grades = grade(grays[0], box['front']['grade'], classifier, add_border=True)
-
     # list files and directories
-    pmargin = int(margin*dpi)
     max_h = 0
     max_w = 0
     sumarries = []
@@ -154,47 +136,43 @@ def grade_all(path, grades_csv, box, dpi=300, shape=(8.5,11)):
     # loading our CNN model
     classifier = load_model('digit_recognizer.h5')
 
-    # f = 'Thibault Emile_15482717_2082734_assignsubmission_file_Thibault_Emile_2082734_Devoir6_MTH1102_A21_Gr02.pdf'
-    # # f2 = 'Bibombe Nathan_15482710_2118644_assignsubmission_file_Bibombe_Nathan_2118644_Devoir6_MTH1102_AUTOMNE2021_Gr02.pdf'
-    # file = os.path.join(path, f)
-    # numbers = grade(file, box, classifier)
-
     # grade files
     max_h = 0
     max_w = 0
     sumarries = []
     dt = get_date()
     trim = box['trim'] if 'trim' in box else None
-    for f in os.listdir(path):
-        if not f.endswith('.pdf'):
-            continue
-        # search matricule
-        m = re.search(re_mat, f)
-        if not m:
-            print("Matricule wasn't found in "+f)
-            continue
-        m = m.group()
-
-        file = os.path.join(path, f)
-        if os.path.isfile(file):
-            grays = gray_images(file, [0], straighten=False, shape=shape)
-            if grays is None:
-                print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+    for root, dirs, files in os.walk(path):
+        for f in files:
+            if not f.endswith('.pdf'):
                 continue
-            gray = grays[0]
-            total_matched, numbers, grades = grade(gray, box['grade'], classifier=classifier, trim=trim)
-            if numbers:
-                print("%s: %.2f" % (f, numbers[-1]))
-                grades_df.at[m, 'Note'] = numbers[-1]
-                grades_df.at[m, 'Dernière modification (note)'] = dt
-            else:
-                print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
-            sumarry, h, w = create_summary(grades, m, numbers, total_matched, f, dpi)
-            sumarries.append((int(m), sumarry))
-            if w > max_w:
-                max_w = w
-            if h > max_h:
-                max_h = h
+            # search matricule
+            m = re.search(re_mat, f)
+            if not m:
+                print("Matricule wasn't found in "+f)
+                continue
+            m = m.group()
+
+            file = os.path.join(root, f)
+            if os.path.isfile(file):
+                grays = gray_images(file, [0], straighten=False, shape=shape)
+                if grays is None:
+                    print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+                    continue
+                gray = grays[0]
+                total_matched, numbers, grades = grade(gray, box['grade'], classifier=classifier, trim=trim)
+                if numbers:
+                    print("%s: %.2f" % (f, numbers[-1]))
+                    grades_df.at[m, 'Note'] = numbers[-1]
+                    grades_df.at[m, 'Dernière modification (note)'] = dt
+                else:
+                    print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
+                sumarry, h, w = create_summary(grades, m, numbers, total_matched, f, dpi)
+                sumarries.append((int(m), sumarry))
+                if w > max_w:
+                    max_w = w
+                if h > max_h:
+                    max_h = h
 
     # store grades
     grades_df.to_csv(grades_csv)
@@ -291,6 +269,7 @@ def grade(gray, box, classifier=None, add_border=False, trim=None):
             return False, None, cropped
         c2 = [(c+p, l+[i]) for p, i in numbers for c, l in combinations]
         combinations = c2
+    # Try first the ones with the highest probability
     combinations = sorted(combinations, reverse=True)
     for p, numbers in combinations:
         # if only one number, return it
@@ -307,6 +286,7 @@ def grade(gray, box, classifier=None, add_border=False, trim=None):
     p, total = (sum(n[0] for n in expected_numbers) / len(expected_numbers),
                 sum(n[1] for n in expected_numbers))
     pt, nt = all_numbers[-1][0]
+    # keep the first numbers, but choose the most probable total (either the sum or the one read)
     return False, [n for p, n in expected_numbers[:-1]] + [nt if pt >= p else total], cropped
 
 
@@ -419,6 +399,10 @@ def find_grade_boxes(cropped, add_border=False, max_diff=50, thick=5):
     cnts, hierarchy = cv2.findContours(find_edges(cropped2, thick=thick), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours((cnts, hierarchy))
     imwrite_contours("cropped_all_boxes", cropped2, cnts, thick=thick)
+
+    # check if any contour
+    if not cnts:
+        return []
 
     # keep only the children of the biggest contour
     pos = max(enumerate(cnts), key=lambda cnt: cv2.contourArea(cnt[1]))[0]
@@ -560,6 +544,10 @@ def test(gray_img, classifier=None, trim=None):
     # find contours of the numbers as well as the dot number position
     # return a sorted list of the relevant digits' contours and the dot position (and the threshold image used)
     cnts, dot, thresh = find_digit_contours(gray, trim=trim)
+
+    # if found no digits contours, return 0
+    if not cnts:
+        return [(1.0, 0)]
 
     # extract digits
     all_digits = extract_all_digits(cnts, gray, thresh, classifier)

@@ -8,6 +8,28 @@ sys.path.insert(0, parent_dir)
 from process_copy import config
 
 
+def try_alternative_root(path, root=None, check=True):
+    if not path:
+        return None
+
+    if path.startswith('/'):
+        return path
+
+    if root:
+        npath = os.path.join(root, path)
+        # if file exist, return new path
+        if not check or os.path.exists(npath):
+            return npath
+
+    # try path as a relative path
+    npath = os.path.abspath(path)
+    # if file doesn't exist throw an error
+    if check and not os.path.exists(npath):
+        raise ValueError('Path %s does not exist.' % path)
+
+    return npath
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Move the copy to moodle folders.',
                                      formatter_class=argparse.RawTextHelpFormatter)
@@ -26,7 +48,7 @@ if __name__ == "__main__":
                         help="Compare grades found to the ones in the file provided in the member grades.")
     parser.add_argument("-b", "--batch", type=int, default=500,
                         help="Compress files by batches of the given size in Mb. Default: 500 Mb.")
-    parser.add_argument('-m', '--mpath', type=str, help='path to the moodle folders')
+    parser.add_argument('-m', '--mpath', type=str, default='moodle', help='path to the moodle folders. Default: moodle')
     parser.add_argument('-r', '--root', type=str, help='root path to add to all input paths')
     parser.add_argument("-s", "--suffix", type=str, help="Replace file name by this value when importing, "
                                                          "e.g. Devoir1_MTH1102_H22_Gr01.")
@@ -36,28 +58,13 @@ if __name__ == "__main__":
     parser.add_argument('-t', '--train', default=False, action='store_true', help='train the CNN on the MNIST dataset')
     args = parser.parse_args()
 
-    if args.frontpage:
-        args.frontpage = os.path.abspath(args.frontpage)
-
     if args.root:
         args.root = os.path.abspath(args.root)
-        if not args.path.startswith('/'):
-            args.path = os.path.join(args.root, args.path)
-        if args.grades and not args.grades.startswith('/'):
-            args.grades = os.path.join(args.root, args.grades)
-        if args.mpath:
-            if not args.mpath.startswith('/'):
-                args.mpath = os.path.join(args.root, args.mpath)
-        else:
-            args.mpath = os.path.join(args.root, 'moodle')
-    else:
-        args.path = os.path.abspath(args.path)
-        if args.grades:
-            args.grades = os.path.abspath(args.grades)
-        if args.mpath:
-            args.mpath = os.path.abspath(args.mpath)
-        else:
-            args.mpath = os.path.join(args.path, 'moodle')
+
+    args.path = try_alternative_root(args.path, args.root)
+    args.mpath = try_alternative_root(args.mpath, args.root, check=False)
+    args.frontpage = try_alternative_root(args.frontpage, args.root)
+    args.grades = try_alternative_root(args.grades, args.root)
 
     if args.train:
         from process_copy.train import train
@@ -81,5 +88,5 @@ if __name__ == "__main__":
 
     if args.export:
         from process_copy import mcc
-        mcc.copy_files(args.path, args.mpath, args.grades)
+        mcc.copy_files_for_moodle(args.path, args.mpath, args.grades)
         mcc.zipdirbatch(args.mpath, archive=args.mpath, batch=args.batch)
