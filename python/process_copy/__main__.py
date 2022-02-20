@@ -50,11 +50,16 @@ if __name__ == "__main__":
                         help="Compress files by batches of the given size in Mb. Default: 500 Mb.")
     parser.add_argument('-m', '--mpath', type=str, default='moodle', help='path to the moodle folders. Default: moodle')
     parser.add_argument('-r', '--root', type=str, help='root path to add to all input paths')
-    parser.add_argument("-s", "--suffix", type=str, help="Replace file name by this value when importing, "
-                                                         "e.g. Devoir1_MTH1102_H22_Gr01.")
+    parser.add_argument("-s", "--suffix", type=str,
+                        help="Replace file name by this value when importing. "
+                             "Default: {course}_{session}_{name} when any of them are defined.")
     parser.add_argument("-f", "--frontpage", type=str,
                         help="Use the given latex file, fill it with the name and matricule, "
                              "then add it as a front page.")
+    parser.add_argument("-na", "--name", type=str, help="Name of the devoir or exam.")
+    parser.add_argument("-co", "--course", type=str, help="Name of the course.")
+    parser.add_argument("-se", "--session", type=str, help="Name of the session.")
+
     parser.add_argument('-t', '--train', default=False, action='store_true', help='train the CNN on the MNIST dataset')
     args = parser.parse_args()
 
@@ -65,6 +70,21 @@ if __name__ == "__main__":
     args.mpath = try_alternative_root(args.mpath, args.root, check=False)
     args.frontpage = try_alternative_root(args.frontpage, args.root)
     args.grades = try_alternative_root(args.grades, args.root)
+
+    l_input = ''
+    suffix = ''
+    if args.course:
+        l_input += '\\renewcommand{\\cours}{%s}\n' % args.course
+        suffix += '%s_' % args.course
+    if args.session:
+        l_input += '\\renewcommand{\\session}{%s}\n' % args.session
+        suffix += '%s_' % args.session
+    if args.name:
+        l_input += '\\renewcommand{\\devoir}{%s}\n' % args.name
+        suffix += args.name
+    config.latex['input'] += l_input
+    if args.suffix is None and suffix:
+        args.suffix = suffix
 
     if args.train:
         from process_copy.train import train
