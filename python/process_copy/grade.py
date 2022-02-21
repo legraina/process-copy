@@ -81,7 +81,7 @@ def find_matricules(path, box, grades_csv=None, dpi=300, shape=(8.5,11)):
             file = os.path.join(root, f)
             if os.path.isfile(file):
                 csvf += "%d," % len(sumarries)
-                grays = gray_images(file, shape=shape, straighten=False)
+                grays = gray_images(file, shape=shape)
                 if grays is None:
                     print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
                     continue
@@ -379,21 +379,40 @@ def imstraighten(gray):
     thresh = cv2.threshold(ngray, 0, 255,
                            cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
     imwrite_png("thresh", thresh)
-    # grab the (x, y) coordinates of all pixel values that
-    # are greater than zero, then use these coordinates to
-    # compute a rotated bounding box that contains all
-    # coordinates
-    coords = np.column_stack(np.where(thresh > 0))
+
+    # # grab the (x, y) coordinates of all pixel values that
+    # # are greater than zero, then use these coordinates to
+    # # compute a rotated bounding box that contains all
+    # # coordinates
+    # coords = np.column_stack(np.where(thresh > 0))
+
+    # get rid of thinner lines
+    dilated = cv2.dilate(thresh, np.ones((5, 5), np.uint8))
+    imwrite_png("dilated", dilated)
+    # find lines
+    lines = cv2.HoughLinesP(dilated, 1, np.pi/180, 50, minLineLength=half_dpi)
+    if lines is None:
+        return gray
+    # find longuest lines -> should be horizontal or vertical
+    max_dist = 0
+    max_line = None
+    for l in lines:
+        d = np.square(l[0][2] - l[0][0]) + np.square(l[0][3] - l[0][1])
+        if d > max_dist:
+            max_dist = d
+            max_line = l[0]
+    coords = np.array([max_line[0:2], max_line[2:4]])
     center, dim, angle = cv2.minAreaRect(coords)
-    if angle > 45:
-        angle = 90-angle
-    if abs(angle) > 3:
+    mangle = (180 + angle) % 90
+    if mangle > 45:
+        mangle = 90 - mangle
+    if abs(mangle) > 3:
         raise ValueError("Current page is too skewed.")
     # rotate the image to deskew it
     (h, w) = gray.shape
     center = (w // 2, h // 2)
     # divide angle by 2 in case of error as we are changing the center and we are just using small angles
-    M = cv2.getRotationMatrix2D(center, angle/2, 1.0)
+    M = cv2.getRotationMatrix2D(center, mangle, 1.0)
     rotated = cv2.warpAffine(gray, M, (w, h),
                              flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     imwrite_png("rotated", rotated)
