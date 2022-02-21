@@ -41,6 +41,7 @@ allowed_decimals = ['0', '25', '5', '75']
 len_mat = 7
 RED = (225,6,0)
 GREEN = (0,154,23)
+ORANGE = (255,127,0)
 BLACK=(0,0,0)
 
 ph = 0
@@ -58,6 +59,50 @@ def refresh(dpi=300):
 
 
 refresh()
+
+
+def find_matricules(path, box, grades_csv=None, dpi=300, shape=(8.5,11)):
+    shape = (int(dpi * shape[0]), int(dpi * shape[1]))
+
+    # loading our CNN model
+    classifier = load_model('digit_recognizer.h5')
+
+    # load csv
+    grades_df = pd.read_csv(grades_csv) if grades_csv else None
+
+    # list files and directories
+    sumarries = []
+    csvf = "Id,Matricule,File\n"
+    for root, dirs, files in os.walk(path):
+        for f in files:
+            if not f.endswith('.pdf'):
+                continue
+
+            file = os.path.join(root, f)
+            if os.path.isfile(file):
+                csvf += "%d," % len(sumarries)
+                grays = gray_images(file, shape=shape, straighten=False)
+                if grays is None:
+                    print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+                    continue
+                mat, id_box = find_matricule(grays, box['front'], box['regular'], classifier, grades_df,
+                                             separate_box=box['separate_box'])
+                if not mat:
+                    print("No matricule found for %s" % f)
+                    csvf += ","
+                else:
+                    csvf += mat+","
+                csvf += file + '\n'
+
+                # put everything in an image
+                sumarry = create_summary(id_box, mat, None, None, "%d: %s" % (len(sumarries), f), dpi)
+                sumarries.append(sumarry)
+
+    # save summary pdf and grades
+    pages = create_whole_summary(sumarries)
+    save_pages(pages, "matricule_summary.pdf")
+    with open("matricules.csv", 'w') as wf:
+        wf.write(csvf)
 
 
 def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=300, margin=1, shape=(8.5,11)):
@@ -112,16 +157,12 @@ def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=
                 csvf += "\n"
 
             # put everything in an image
-            sumarry, h, w = create_summary(id_box, grades, mat, numbers, total_matched,
-                                           "%s: %s" % (dir_path, f), dpi)
+            sumarry = create_summary(id_box, grades, mat, numbers, total_matched,
+                                     "%s: %s" % (dir_path, f), dpi)
             sumarries.append(sumarry)
-            if w > max_w:
-                max_w = w
-            if h > max_h:
-                max_h = h
 
     # save summary pdf and grades
-    pages = create_whole_summary(sumarries, max_h, max_w, dpi)
+    pages = create_whole_summary(sumarries)
     save_pages(pages, grades_prefix + "summary.pdf")
     with open(grades_prefix+"notes.csv", 'w') as wf:
         wf.write(csvf)
@@ -167,18 +208,14 @@ def grade_all(path, grades_csv, box, dpi=300, shape=(8.5,11)):
                     grades_df.at[m, 'Dernière modification (note)'] = dt
                 else:
                     print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
-                sumarry, h, w = create_summary(grades, m, numbers, total_matched, f, dpi)
+                sumarry = create_summary(grades, m, numbers, total_matched, f, dpi)
                 sumarries.append((int(m), sumarry))
-                if w > max_w:
-                    max_w = w
-                if h > max_h:
-                    max_h = h
 
     # store grades
     grades_df.to_csv(grades_csv)
     # write summary
     sumarries = [s for (mat, s) in sorted(sumarries)]
-    pages = create_whole_summary(sumarries, max_h, max_w, dpi)
+    pages = create_whole_summary(sumarries)
     gname = grades_csv.split('.')[0]
     save_pages(pages, gname + "_summary.pdf")
 
@@ -380,7 +417,7 @@ def find_edges(cropped, thick=5, min_lenth=80, max_gap=15, angle_resolution=np.p
 
     # erode the image to keep only the big lines
     if not line_on_original:
-        edged = cv2.erode(edged, kernel=np.ones((5, 5), dtype='uint8'))
+        edged = cv2.erode(edged, kernel=np.ones((thick, thick), dtype='uint8'))
         imwrite_png("eroded", edged)
     return edged
 
@@ -477,11 +514,12 @@ def find_grade_boxes(cropped, add_border=False, max_diff=50, thick=5):
     return boxes
 
 
-def find_matricule(grays, box_id, box_mat, classifier):
+def find_matricule(grays, front_box, regular_box, classifier, grades_df=None, separate_box=True):
     possible_digits = [{} for i in range(len_mat)]
 
     def find_digits(gray_box, split=False):
-        # find contours of the numbers as well as the dot number position
+        # find contours of the numbers.
+        # If separate_box, each number of the matricule is in its separate box
         # return a sorted list of the relevant digits' contours and the dot position (and the threshold image used)
         # 10 = len("Matricule:")
         cnts, dot, thresh = find_digit_contours(gray_box, max_cnts=len_mat,
@@ -489,12 +527,38 @@ def find_matricule(grays, box_id, box_mat, classifier):
         # check length
         if len(cnts) != len_mat:
             return False
-        # extract digits
-        all_digits = extract_all_digits(cnts, gray_box, thresh, classifier)
+
+        all_digits = []
+        # if each number is in a separate box, extract it individually
+        if separate_box:
+            for c in cnts:
+                digit_box = get_image_from_contour(gray_box, c, border=7)
+                dcnts, dot, dthresh = find_digit_contours(digit_box)
+                # check if only one digit has been found in the box
+                if len(dcnts) == 1:
+                    d = extract_digit(dcnts[0], digit_box, dthresh, classifier)
+                # if too many contours, just remove some pixels on the border of the image
+                elif len(dcnts) > 1:
+                    d = extract_digit(c, gray_box, thresh, classifier, border=-7)
+                # if no contour at all, it means that at least one of the box is empty
+                # -> throw this results
+                else:
+                    all_digits = []
+                    break
+                all_digits.append(d)
+        # otherwise, extract all digits at once
+        else:
+            all_digits = extract_all_digits(cnts, gray_box, thresh, classifier)
+            all_digits = [d for c, d in all_digits]
+
+        # check length
+        if len(all_digits) != len_mat:
+            return True
+
         # store values
-        for i, d_cnt in enumerate(all_digits):
+        for i, digits in enumerate(all_digits):
             distri = possible_digits[i]
-            for p, d in d_cnt[1]:
+            for p, d in digits:
                 if d in distri:
                     distri[d] += p
                 else:
@@ -502,11 +566,11 @@ def find_matricule(grays, box_id, box_mat, classifier):
         return True
 
     # find the id box
-    cropped = fetch_box(grays[0], box_id)
+    cropped = fetch_box(grays[0], front_box)
     cnts, hierarchy = cv2.findContours(find_edges(cropped), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours((cnts, hierarchy))
     imwrite_contours("rgray", cropped, cnts, thick=5)
-    # Find the biggest contour for the id box
+    # Find the biggest contour for the front box
     pos, biggest_c = max(enumerate(cnts), key=lambda cnt: cv2.contourArea(cnt[1]))
     id_box = get_image_from_contour(cropped, biggest_c)
     for cnt in biggest_children(cnts, hierarchy, pos):
@@ -515,9 +579,9 @@ def find_matricule(grays, box_id, box_mat, classifier):
 
     # try to find a matricule on the next page
     for gray in grays[1:]:
-        cropped = fetch_box(gray, box_mat)
-        mgray = find_edges(cropped, thick=3, line_on_original=True, max_gap=5, min_lenth=150)
-        find_digits(mgray)
+        cropped = fetch_box(gray, regular_box)
+        # mgray = find_edges(cropped, thick=3, line_on_original=True, max_gap=5, min_lenth=150)
+        find_digits(cropped, True)
 
     # build matricules and sort them by probabilities
     matricules = [(0, '')]
@@ -525,10 +589,16 @@ def find_matricule(grays, box_id, box_mat, classifier):
         matricules = [(c+p, '%s%d' % (m, d)) for c, m in matricules for d, p in distri.items()]
     smats = sorted(matricules, reverse=True)
 
-    # find the most valid and probable one
-    for p, mat in smats:
-        if re.match(re_mat, mat):
-            return mat, id_box
+    # find the most valid and probable one if no csv to check the matricule
+    if grades_df is None:
+        for p, mat in smats:
+            if re.match(re_mat, mat):
+                return mat, id_box
+    # otherwise, the most probable matricule that exists
+    else:
+        for p, mat in smats:
+            if mat in grades_df['Matricule'].values:
+                return mat, id_box
 
     return None, id_box
 
@@ -560,9 +630,9 @@ def test(gray_img, classifier=None, trim=None):
     return process_digits_combinations(all_digits, dot)
 
 
-def get_image_from_contour(img, cnt):
+def get_image_from_contour(img, cnt, border=0):
     (x, y, w, h) = cv2.boundingRect(cnt)
-    img = img[y:y+h, x:x+w]
+    img = img[y+border:y+h-border, x+border:x+w-border]
     imwrite_png("cropped_cnt", img)
     return img
 
@@ -588,21 +658,10 @@ def biggest_children(cnts, hierarchy, parent_positon):
 
 
 def find_digit_contours(gray, split_on_semi_column=True, min_box_before_split=0, max_cnts=None, trim=None):
-    # threshold the gray image, then apply a series of morphological
-    # operations to cleanup the thresholded image
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    imwrite_png("blurred", blurred)
-    thresh = cv2.threshold(blurred, 200, 255,
-                           cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
-    imwrite_png("thresh", thresh)
-    # # noise removal
-    # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 5))
-    # opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-    # imwrite_png("opening", opening)
-    opening = thresh
+    thresh = get_clean_thresh(gray)
 
     # finding contours in image
-    cnts, h = cv2.findContours(opening.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts, h = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours((cnts, h))
     imwrite_contours("rgray", gray, cnts)
 
@@ -611,6 +670,17 @@ def find_digit_contours(gray, split_on_semi_column=True, min_box_before_split=0,
         cnts, gray, split_on_semi_column, min_box_before_split, max_cnts, trim=trim)
 
     return scnts, dot, thresh
+
+
+def get_clean_thresh(gray):
+    # threshold the gray image, then apply a series of morphological
+    # operations to cleanup the thresholded image
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    imwrite_png("blurred", blurred)
+    thresh = cv2.threshold(blurred, 200, 255,
+                           cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+    imwrite_png("thresh", thresh)
+    return thresh
 
 
 def clean_and_sort_digit_contours(cnts, gray=None, split_on_semi_column=True,
@@ -697,45 +767,48 @@ def clean_and_sort_digit_contours(cnts, gray=None, split_on_semi_column=True,
     return ccnts, dot
 
 
-def extract_all_digits(cnts, gray, thresh, classifier, threshold=1e-2):
+def extract_all_digits(cnts, gray, thresh, classifier, threshold=1e-2, border=7):
     all_digits = []
     for c in cnts:
         try:
-            # creating a mask
-            mask = np.zeros(gray.shape, dtype="uint8")
-            (x, y, w, h) = cv2.boundingRect(c)
-
-            hull = cv2.convexHull(c)
-            cv2.drawContours(mask, [hull], -1, 255, -1)
-            mask = cv2.bitwise_and(thresh, thresh, mask=mask)
-
-            # Getting Region of interest
-            roi = mask[max(0, y - 7):min(mask.shape[0], y + h + 7),
-                       max(0, x - 7):min(mask.shape[1], x + w + 7)]
-            imwrite_png("roi", roi)
-
-            roi = make_square(roi)
-            imwrite_png("roi2", roi)
-
-            # predicting
-            roi = roi / 255  # normalize
-            roi = roi.reshape(1, 28, 28, 1).astype('float32')
-            pproba = classifier.predict(roi)
-            predict = [(p, i) for i, p in enumerate(pproba[0])]
-            predict = sorted(predict, reverse=True)
-            cumul = 0
-            d = []
-            for p, i in predict:
-                d.append((p, i))
-                cumul += p
-                if cumul > 1 - threshold:
-                    break
+            d = extract_digit(c, gray, thresh, classifier, threshold, border)
             all_digits.append((c, d))
-
         except Exception as e:
             print(e)
-
     return all_digits
+
+
+def extract_digit(cnt, gray, thresh, classifier, threshold=1e-2, border=7):
+    # creating a mask
+    mask = np.zeros(gray.shape, dtype="uint8")
+    (x, y, w, h) = cv2.boundingRect(cnt)
+
+    hull = cv2.convexHull(cnt)
+    cv2.drawContours(mask, [hull], -1, 255, -1)
+    mask = cv2.bitwise_and(thresh, thresh, mask=mask)
+
+    # Getting Region of interest
+    roi = mask[max(0, y - border):min(mask.shape[0], y + h + border),
+               max(0, x - border):min(mask.shape[1], x + w + border)]
+    imwrite_png("roi", roi)
+
+    roi = make_square(roi)
+    imwrite_png("roi2", roi)
+
+    # predicting
+    roi = roi / 255  # normalize
+    roi = roi.reshape(1, 28, 28, 1).astype('float32')
+    pproba = classifier.predict(roi)
+    predict = [(p, i) for i, p in enumerate(pproba[0])]
+    predict = sorted(predict, reverse=True)
+    cumul = 0
+    d = []
+    for p, i in predict:
+        d.append((p, i))
+        cumul += p
+        if cumul > 1 - threshold:
+            break
+    return d
 
 
 def process_digits_combinations(all_digits, dot):
@@ -818,14 +891,15 @@ def create_summary(id_box, grades, mat, numbers, total_matched, name, dpi):
     cv2.putText(color_summary, "Matricule: " + (mat if mat else 'N/A'),
                 (int(2.5 * dpi), id_box.shape[0] + half_dpi),  # position at which writing has to start
                 cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if mat else RED, 5)
-    cv2.putText(color_summary, str(numbers[-1]) if numbers else 'N/A',
-                (id_box.shape[1] + half_dpi, h - half_dpi),  # position at which writing has to start
-                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if total_matched else RED, 5)
+    if total_matched is not None:
+        cv2.putText(color_summary, str(numbers[-1]) if numbers else 'N/A',
+                    (id_box.shape[1] + half_dpi, h - half_dpi),  # position at which writing has to start
+                    cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if total_matched else RED, 5)
     cv2.putText(color_summary, name,
                 (quarter_dpi, h - quarter_dpi),  # position at which writing has to start
-                cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
+                cv2.FONT_HERSHEY_SIMPLEX, 1, ORANGE, 3)
     imwrite_png('summary', color_summary)
-    return color_summary, h, w
+    return color_summary
 
 
 def create_summary(grades, mat, numbers, total_matched, name, dpi):
@@ -841,17 +915,28 @@ def create_summary(grades, mat, numbers, total_matched, name, dpi):
     cv2.putText(color_summary, "Matricule: " + (str(mat) if mat else 'N/A'),
                 (quarter_dpi, h - half_dpi),  # position at which writing has to start
                 cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if mat else RED, 5)
-    cv2.putText(color_summary, str(numbers[-1]) if numbers else 'N/A',
-                (w - dpi, h - half_dpi),  # position at which writing has to start
-                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if total_matched else RED, 5)
+    if total_matched is not None:
+        cv2.putText(color_summary, str(numbers[-1]) if numbers else 'N/A',
+                    (w - dpi, h - half_dpi),  # position at which writing has to start
+                    cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if total_matched else RED, 5)
     cv2.putText(color_summary, name,
                 (quarter_dpi, h - quarter_dpi),  # position at which writing has to start
-                cv2.FONT_HERSHEY_SIMPLEX, 1, BLACK, 2)
+                cv2.FONT_HERSHEY_SIMPLEX, 1, ORANGE, 3)
     imwrite_png('summary', color_summary)
-    return color_summary, h, w
+    return color_summary
 
 
-def create_whole_summary(sumarries, max_h, max_w, dpi):
+def create_whole_summary(sumarries):
+    # retrieve max width and height
+    max_h = 0
+    max_w = 0
+    for s in sumarries:
+        if s.shape[1] > max_w:
+            max_w = s.shape[1]
+        if s.shape[0] > max_h:
+            max_h = s.shape[0]
+
+    # create summary pages
     hmargin = int(pw - max_w) // 2  # horizontal margin
     imgh = max_h + 15
     n_s = ph // imgh  # number of pictures by page

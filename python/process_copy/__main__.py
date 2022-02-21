@@ -33,15 +33,23 @@ def try_alternative_root(path, root=None, check=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Move the copy to moodle folders.',
                                      formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument('path', type=str, help='path to the devoir folder')
+    parser.add_argument('path', type=str, help='path to the copies folder')
     parser.add_argument('-i', '--import', default=False, action='store_true', dest='import_files',
                         help="Import files from moodle directories.")
     parser.add_argument('-e', '--export', default=False, action='store_true',
                         help="Export files from moodle directories.")
+    parser.add_argument('-f', '--find', type=str,
+                        help="Find matricule in files. "
+                             "Use moodle csv files to check existence of matricule if provided.\n"
+                             "Need to define the boxes where to search for a matricule in the config: "
+                             "need a box for the front page and for a regular page. "
+                             "Here the current configuration:\n"
+                             "%s" % "\n".join(["  - \"%s\": %s" % (k, str(v))
+                                               for k, v in config.matricule_box.items()]))
     parser.add_argument('-g', '--grade', type=str,
                         help="Read the grade on the first page of the pdf.\n"
                              "Need to define the box in config. Here the current configuration:\n"
-                             "%s" % "\n".join(["  - \"%s\": %s" % (k, str(v)) for k, v in config.box.items()]))
+                             "%s" % "\n".join(["  - \"%s\": %s" % (k, str(v)) for k, v in config.grade_box.items()]))
     parser.add_argument('--grades', type=str,
                         help="Path to a csv file to add the grades. Needs columns \"Matricule\" and \"Note\".")
     parser.add_argument('-c', '--compare', default=False, action='store_true',
@@ -53,7 +61,7 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--suffix", type=str,
                         help="Replace file name by this value when importing. "
                              "Default: {course}_{session}_{name} when any of them are defined.")
-    parser.add_argument("-f", "--frontpage", type=str,
+    parser.add_argument("-fp", "--frontpage", type=str,
                         help="Use the given latex file, fill it with the name and matricule, "
                              "then add it as a front page.")
     parser.add_argument("-na", "--name", type=str, help="Name of the devoir or exam.")
@@ -90,15 +98,19 @@ if __name__ == "__main__":
         from process_copy.train import train
         train()
 
+    if args.find:
+        from process_copy.grade import find_matricules
+        find_matricules(args.path, config.matricule_box[args.find], args.grades)
+
     if args.grade:
         from process_copy.grade import grade_all, compare_all, grade_all_exams
         if args.grade == 'devoir':
             if args.compare:
-                compare_all(args.path, args.grades, config.box[args.grade])
+                compare_all(args.path, args.grades, config.grade_box[args.grade])
             else:
-                grade_all(args.path, args.grades, config.box[args.grade])
+                grade_all(args.path, args.grades, config.grade_box[args.grade])
         elif args.grade == 'exam':
-            grade_all_exams(args.path, args.grades, config.box[args.grade])
+            grade_all_exams(args.path, args.grades, config.grade_box[args.grade])
         else:
             raise ValueError("Grade configuration %s hasn't any action defined.")
 
