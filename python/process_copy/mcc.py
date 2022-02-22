@@ -28,7 +28,7 @@ import zipfile
 import re
 import pandas as pd
 import unidecode
-from PyPDF2 import PdfFileMerger, PdfFileReader
+import fitz
 from colorama import Fore, Style
 import traceback
 
@@ -117,17 +117,24 @@ def import_files(dpath, opath, suffix=None, latex_front_page=None):
         dfile = os.path.join(dpath, name)  # destination file
         # add front page if any
         if latex_front_page:
+            f_page = None
             try:
                 f_page = create_front_page(latex_front_page, _split[0], mat)
-                merger = PdfFileMerger(strict=False)
-                merger.append(f_page)
-                merger.append(file)
-                merger.write(dfile)
-                merger.close()
+                # merger = PdfFileMerger()
+                # merger.append(f_page)
+                # merger.append(file)
+                # merger.write(dfile)
+                # merger.close()
+                doc = fitz.Document(f_page)
+                copy = fitz.Document(file)
+                doc.insert_pdf(copy)
+                doc.save(dfile)
                 print("Imported file %s" % f)
             except Exception as e:
                 traceback.print_exception(type(e), e, e.__traceback__)
                 print(Fore.RED + 'Error when creating new pdf for %s' % f + Style.RESET_ALL)
+                if f_page:
+                    copy_file(f_page, dfile)
                 n -= 1
         else:
             # copy file
