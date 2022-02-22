@@ -28,7 +28,9 @@ import zipfile
 import re
 import pandas as pd
 import unidecode
-from PyPDF2 import PdfFileMerger
+from PyPDF2 import PdfFileMerger, PdfFileReader
+from colorama import Fore, Style
+import traceback
 
 from process_copy.config import re_mat, latex
 
@@ -115,12 +117,18 @@ def import_files(dpath, opath, suffix=None, latex_front_page=None):
         dfile = os.path.join(dpath, name)  # destination file
         # add front page if any
         if latex_front_page:
-            f_page = create_front_page(latex_front_page, _split[0], mat)
-            merger = PdfFileMerger()
-            merger.append(f_page)
-            merger.append(file)
-            merger.write(dfile)
-            merger.close()
+            try:
+                f_page = create_front_page(latex_front_page, _split[0], mat)
+                merger = PdfFileMerger(strict=False)
+                merger.append(f_page)
+                merger.append(file)
+                merger.write(dfile)
+                merger.close()
+                print("Imported file %s" % f)
+            except Exception as e:
+                traceback.print_exception(type(e), e, e.__traceback__)
+                print(Fore.RED + 'Error when creating new pdf for %s' % f + Style.RESET_ALL)
+                n -= 1
         else:
             # copy file
             copy_file(file, dfile)

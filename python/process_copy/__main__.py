@@ -37,18 +37,18 @@ if __name__ == "__main__":
     parser.add_argument('-i', '--import', default=False, action='store_true', dest='import_files',
                         help="Import files from moodle directories.")
     parser.add_argument('-e', '--export', default=False, action='store_true',
-                        help="Export files from moodle directories.")
+                        help="Export files to moodle directories.")
     parser.add_argument('-f', '--find', type=str,
-                        help="Find matricule in files. "
+                        help="Find matricule in files according to the configuration provided. "
                              "Use moodle csv files to check existence of matricule if provided.\n"
-                             "Need to define the boxes where to search for a matricule in the config: "
+                             "Need to define the boxes where to search for a matricule in config.py: "
                              "need a box for the front page and for a regular page. "
-                             "Here the current configuration:\n"
+                             "Here the current configurations available:\n"
                              "%s" % "\n".join(["  - \"%s\": %s" % (k, str(v))
                                                for k, v in config.matricule_box.items()]))
     parser.add_argument('-g', '--grade', type=str,
-                        help="Read the grade on the first page of the pdf.\n"
-                             "Need to define the box in config. Here the current configuration:\n"
+                        help="Read the grade on the first page of the pdf according to the configuration provided.\n"
+                             "Need to define the box in config. Here the current configurations available:\n"
                              "%s" % "\n".join(["  - \"%s\": %s" % (k, str(v)) for k, v in config.grade_box.items()]))
     parser.add_argument('--grades', type=str,
                         help="Path to a csv file to add the grades. Needs columns \"Matricule\" and \"Note\".")
@@ -73,9 +73,11 @@ if __name__ == "__main__":
 
     if args.root:
         args.root = os.path.abspath(args.root)
+        if not os.path.exists(args.root):
+            raise ValueError('Root path %s does not exist.' % args.root)
 
-    args.path = try_alternative_root(args.path, args.root)
-    args.mpath = try_alternative_root(args.mpath, args.root, check=False)
+    args.path = try_alternative_root(args.path, args.root, check=not args.import_files)
+    args.mpath = try_alternative_root(args.mpath, args.root, check=args.import_files)
     args.frontpage = try_alternative_root(args.frontpage, args.root)
     args.grades = try_alternative_root(args.grades, args.root)
 
