@@ -110,12 +110,15 @@ D\'epartement de Math\'ematiques et de G\'enie Industriel
 
 {
 \renewcommand{\arraystretch}{1.5}
+\newcommand{\bareme}[1]{\multicolumn{1}{r}{\Huge /#1}}
 \begin{center}
 \begin{tabular}{|c|c|c||c|} \hline
 {\bf \Large Question}							& {\bf \Large Autres}			& 	{\bf \Large Bonus}	&  \\ 
 {\bf \Large corrig\'ee}						& {\bf \Large  questions}	&		{\bf \Large \LaTeX}	& {\bf \Large Total} \\ \hline
 \hspace{20mm}			{\Huge \strut}	& \hspace{20mm}						&		\hspace{20mm}				&\hspace{20mm} \\
-\hspace{20mm}			{\Huge \strut}	& \hspace{20mm}						&		\hspace{20mm} 			& \hspace{20mm} {\Large /10} \\ \hline
+\hspace{20mm}			{\Huge \strut}	& \hspace{20mm}						&		\hspace{20mm} 			& \hspace{20mm} \\ \hline
+\multicolumn{4}{r}{} \\
+\bareme{6}	 & \bareme{4} & \bareme{1} & \bareme{10}
 \end{tabular}
 \end{center}
 }
