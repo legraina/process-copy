@@ -32,7 +32,7 @@ from keras.layers import Flatten
 from keras.layers import BatchNormalization
 from keras.layers.convolutional import Conv2D
 from keras.layers.convolutional import MaxPooling2D
-from process_copy.grade import imwrite_png
+from process_copy.recognize import imwrite_png
 
 
 def train(mix_datasets=True):

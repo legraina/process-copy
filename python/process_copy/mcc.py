@@ -38,10 +38,55 @@ from process_copy.config import re_mat, latex
 MB = 2**20
 
 
-def copy_file(file, folder):
+def copy_file(file, dest):
+    # extract folder and name if dest is not a folder
+    old_name = None
+    folder = dest
+    if not os.path.isdir(dest):
+        old_name = file.rsplit('/')[-1]
+        folder = dest.rsplit('/', 1)[0]
+        if not folder:
+            folder = './'
+
+    # copy file
     if not os.path.exists(folder):
         os.makedirs(folder)
     shutil.copy(file, folder)
+
+    # rename it if necessary
+    if old_name:
+        os.rename(os.path.join(folder, old_name), dest)
+
+
+def copy_file_with_front_page(file, dfile, name=None, mat=None, latex_front_page=None):
+    # add front page if any
+    if latex_front_page:
+        f = file.rsplit('/')[-1]
+        f_page = None
+        try:
+            f_page = create_front_page(latex_front_page, name, mat)
+            doc = fitz.Document(f_page)
+            copy = fitz.Document(file)
+            doc.insert_pdf(copy)
+            doc.save(dfile)
+            print("Imported file %s" % f)
+        except Exception as e:
+            traceback.print_exception(type(e), e, e.__traceback__)
+            print(Fore.RED + 'Error when creating new pdf for %s' % f + Style.RESET_ALL)
+            if f_page:
+                copy_file(f_page, dfile)
+            return False
+    else:
+        # copy file
+        copy_file(file, dfile)
+    return True
+
+
+def get_name(mat, grades_dfs):
+    for i, g in enumerate(grades_dfs):
+        if mat in g.index:
+            return i, g.at[mat, 'Nom complet']
+    return -1, None
 
 
 def copy_files_for_moodle(path, mpath=None, grades_csv=None):
@@ -115,31 +160,56 @@ def import_files(dpath, opath, suffix=None, latex_front_page=None):
 
         file = os.path.join(afolder, files[0])  # origin file
         dfile = os.path.join(dpath, name)  # destination file
-        # add front page if any
-        if latex_front_page:
-            f_page = None
-            try:
-                f_page = create_front_page(latex_front_page, _split[0], mat)
-                # merger = PdfFileMerger()
-                # merger.append(f_page)
-                # merger.append(file)
-                # merger.write(dfile)
-                # merger.close()
-                doc = fitz.Document(f_page)
-                copy = fitz.Document(file)
-                doc.insert_pdf(copy)
-                doc.save(dfile)
-                print("Imported file %s" % f)
-            except Exception as e:
-                traceback.print_exception(type(e), e, e.__traceback__)
-                print(Fore.RED + 'Error when creating new pdf for %s' % f + Style.RESET_ALL)
-                if f_page:
-                    copy_file(f_page, dfile)
-                n -= 1
+        if copy_file_with_front_page(file, dfile, name=_split[0], mat=mat, latex_front_page=latex_front_page):
+            n += 1
+    print('%d files has been moved and copied to %s.' % (n, dpath))
+
+
+def import_files_with_csv(dpath, matricule_csv, grades_csv, suffix=None, latex_front_page=None):
+    grades_dfs = [pd.read_csv(g, index_col='Matricule') for g in grades_csv]
+    grades_names = [g.rsplit('/')[-1].split('.')[0] for g in grades_csv]
+    matricule_df = pd.read_csv(matricule_csv, dtype={1: 'str'})
+
+    # check matricules validity
+    matricules = set()
+    for idx, row in matricule_df.iterrows():
+        m = row['Matricule']
+        if pd.isna(m):
+            continue
+        if m in matricules:
+            raise ValueError('Matricule %s exists more than once' % m)
+        matricules.add(m)
+        i, n = get_name(m, grades_dfs)
+        if i < 0:
+            raise ValueError('Matricule %s is not found in any csv file.' % m)
+
+    # copy files
+    if not os.path.exists(dpath):
+        os.mkdir(dpath)
+    for gn in grades_names:
+        p = os.path.join(dpath, gn)
+        if not os.path.exists(p):
+            os.mkdir(p)
+    n = 0
+    for idx, row in matricule_df.iterrows():
+        m = row['Matricule']
+        if pd.isna(m):
+            continue
+
+        file = row['File']
+        # rename it
+        # use folder name: "Nom complet_Matricule_suffix"
+        i, name = get_name(m, grades_dfs)
+        fname = name + "_%s_" % m
+        if suffix:
+            fname = fname + suffix + ".pdf"
         else:
-            # copy file
-            copy_file(file, dfile)
-        n += 1
+            fname = fname + file
+
+        p = os.path.join(dpath, grades_names[i])  # destination folder
+        dfile = os.path.join(p, fname)  # destination file
+        if copy_file_with_front_page(file, dfile, name=name, mat=m, latex_front_page=latex_front_page):
+            n += 1
     print('%d files has been moved and copied to %s.' % (n, dpath))
 
 

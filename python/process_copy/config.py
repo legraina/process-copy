@@ -14,8 +14,8 @@ grade_box = {
 matricule_box = {
     "intra": {
         'front': (0.05, 0.85, 0.2, 0.35),
-        'regular': (0.55, 0.95, 0.05, 0.12),
-        'separate_box': True
+        'regular': (0.55, 0.95, 0.05, 0.13),
+        'separate_box': True  # True if there are some boxes for each digit of the matricule
     }
 }
 
