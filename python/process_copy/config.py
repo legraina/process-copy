@@ -6,8 +6,10 @@ grade_box = {
         'grade': (.1, .9, .6, .9),  # x1, x2, y1, y2 in % of the page width and height
         # 'trim': [(-1, 3)]  # i, n: n number of digits to remove at the end of the ith box
     },
-    "exam": {
-        'grade': (0.86, 0.94, 0.22, 0.5)
+    "intra": {
+        'grade': (0.75, 1, 0.2, 0.55),
+        # i, n: n number of digits to remove at the end of the ith box. -1 means to trim everything
+        'trim': [(0, -1), (1, 2), (2, 2), (3, 3), (4, 2), (5, 3)]
     }
 }
 

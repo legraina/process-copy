@@ -103,7 +103,7 @@ if __name__ == "__main__":
     if args.path:
         print('Path: '+args.path)
     if not args.mpath:
-        args.mpath = 'matricules.csv' if args.grades else 'moodle'
+        args.mpath = 'matricules.csv' if args.grades and (args.find or args.import_files) else 'moodle'
     args.mpath = try_alternative_root(args.mpath, args.root, check=args.import_files)
     if args.mpath:
         print('Moodle path: '+args.mpath)
@@ -152,16 +152,15 @@ if __name__ == "__main__":
 
     if args.grade:
         print('Find the grade for the pdf files in %s' % args.path)
-        from process_copy.recognize import grade_all, compare_all, grade_all_exams
-        if args.grade == 'devoir':
+        from process_copy.recognize import grade_all, compare_all
+        try:
             if args.compare:
                 compare_all(args.path, args.grades, config.grade_box[args.grade])
             else:
-                grade_all(args.path, args.grades, config.grade_box[args.grade])
-        elif args.grade == 'exam':
-            grade_all_exams(args.path, args.grades, config.grade_box[args.grade])
-        else:
-            raise ValueError("Grade configuration %s hasn't any action defined")
+                grade_all(args.path, args.grades, config.grade_box[args.grade],
+                          id_box=config.matricule_box.get(args.grade))
+        except KeyError:
+            raise KeyError("Grade configuration %s hasn't any configuration defined in config.py" % args.grade)
 
     if args.import_files:
         print('Import the pdf files from %s to %s' % (args.mpath, args.path))
@@ -175,5 +174,10 @@ if __name__ == "__main__":
     if args.export:
         print('Export the pdf files from %s to %s' % (args.path, args.mpath))
         from process_copy import mcc
-        mcc.copy_files_for_moodle(args.path, args.mpath, args.grades)
-        mcc.zipdirbatch(args.mpath, archive=args.mpath, batch=args.batch)
+        names = mcc.copy_files_for_moodle(args.path, args.mpath, args.grades)
+        if names:
+            for n in names:
+                ar = try_alternative_root(n, args.root, check=False)
+                mcc.zipdirbatch(os.path.join(args.mpath, n), archive=ar, batch=args.batch)
+        else:
+            mcc.zipdirbatch(args.mpath, archive=args.mpath, batch=args.batch)

@@ -38,11 +38,17 @@ from process_copy.config import re_mat, latex
 MB = 2**20
 
 
+def load_csv(grades_csv):
+    grades_dfs = [pd.read_csv(g, index_col='Matricule') for g in grades_csv]
+    grades_names = [g.rsplit('/')[-1].split('.')[0] for g in grades_csv]
+    return grades_dfs, grades_names
+
+
 def copy_file(file, dest):
     # extract folder and name if dest is not a folder
     old_name = None
     folder = dest
-    if not os.path.isdir(dest):
+    if '.' in dest.rsplit('/')[-1]:
         old_name = file.rsplit('/')[-1]
         folder = dest.rsplit('/', 1)[0]
         if not folder:
@@ -89,10 +95,11 @@ def get_name(mat, grades_dfs):
     return -1, None
 
 
-def copy_files_for_moodle(path, mpath=None, grades_csv=None):
-    grades_df = pd.read_csv(grades_csv, index_col='Matricule') if grades_csv is not None else None
-    moodle_folders = os.listdir(mpath) if grades_csv is None else None
+def copy_files_for_moodle(path, mpath=None, grades_csv=[]):
+    grades_dfs, grades_names = load_csv(grades_csv)
+    moodle_folders = os.listdir(mpath) if not grades_csv else None
     n = 0
+    paths = ["%s/" % n for n in grades_names] if len(grades_csv) > 1 else [""]
     for root, dirs, files in os.walk(path):
         for f in files:
             file = os.path.join(root, f)
@@ -111,14 +118,22 @@ def copy_files_for_moodle(path, mpath=None, grades_csv=None):
                     continue
                 # find moodle folder
                 # rebuild moodle folder name: "Nom complet_Identifiant_Matricule_assignsubmission_file_"
-                if grades_df is not None:
-                    participant = grades_df.at[mat, 'Identifiant']
-                    m = re.search('\\d+', participant)
-                    if not m:
-                        print("Moodle participant id not found in " + participant)
+                folder = None
+                if grades_dfs:
+                    for i, g in enumerate(grades_dfs):
+                        if mat in g.index:
+                            participant = g.at[mat, 'Identifiant']
+                            m = re.search('\\d+', participant)
+                            if not m:
+                                print("Moodle participant id not found in " + participant)
+                                continue
+                            m_id = m.group()
+                            folder = "%s%s_%s_%s_assignsubmission_file_" \
+                                     % (paths[i], g.at[mat, 'Nom complet'], m_id, mat)
+                            break
+                    if folder is None:
+                        print("Matricule %s was not found in %s" % (mat, ", ".join(grades_csv)))
                         continue
-                    m_id = m.group()
-                    folder = "%s_%s_%s_assignsubmission_file_" % (grades_df.at[mat, 'Nom complet'], m_id, mat)
                 else:
                     folder = next(fd for fd in moodle_folders if mat in fd)
                 # copy file
@@ -128,7 +143,8 @@ def copy_files_for_moodle(path, mpath=None, grades_csv=None):
                     os.remove(f2)
                 copy_file(file, os.path.join(mpath, folder))
                 n += 1
-    print('%d files has been moved and copied to %s.' % (n, mpath))
+    print('%d files has been copied.' % n)
+    return grades_names if len(grades_names) > 1 else []
 
 
 def import_files(dpath, opath, suffix=None, latex_front_page=None):
@@ -162,12 +178,11 @@ def import_files(dpath, opath, suffix=None, latex_front_page=None):
         dfile = os.path.join(dpath, name)  # destination file
         if copy_file_with_front_page(file, dfile, name=_split[0], mat=mat, latex_front_page=latex_front_page):
             n += 1
-    print('%d files has been moved and copied to %s.' % (n, dpath))
+    print('%d files has been copied to %s.' % (n, dpath))
 
 
 def import_files_with_csv(dpath, matricule_csv, grades_csv, suffix=None, latex_front_page=None):
-    grades_dfs = [pd.read_csv(g, index_col='Matricule') for g in grades_csv]
-    grades_names = [g.rsplit('/')[-1].split('.')[0] for g in grades_csv]
+    grades_dfs, grades_names = load_csv(grades_csv)
     matricule_df = pd.read_csv(matricule_csv, dtype={1: 'str'})
 
     # check matricules validity
@@ -210,7 +225,7 @@ def import_files_with_csv(dpath, matricule_csv, grades_csv, suffix=None, latex_f
         dfile = os.path.join(p, fname)  # destination file
         if copy_file_with_front_page(file, dfile, name=name, mat=m, latex_front_page=latex_front_page):
             n += 1
-    print('%d files has been moved and copied to %s.' % (n, dpath))
+    print('%d files has been copied to %s.' % (n, dpath))
 
 
 def zipdirbatch(path, archive='moodle', batch=None):

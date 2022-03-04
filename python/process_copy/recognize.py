@@ -36,7 +36,7 @@ from pdf2image import convert_from_path
 from PIL import Image
 from datetime import datetime
 from process_copy.config import re_mat
-from process_copy.mcc import get_name
+from process_copy.mcc import get_name, load_csv
 
 
 allowed_decimals = ['0', '25', '5', '75']
@@ -72,21 +72,19 @@ def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5,11)):
     classifier = load_model('digit_recognizer.h5')
 
     # load csv
-    grades_dfs = [pd.read_csv(g, index_col='Matricule') for g in grades_csv]
-    grades_names = [g.rsplit('/')[-1].split('.')[0] for g in grades_csv]
+    grades_dfs, grades_names = load_csv(grades_csv)
     root_dir = os.path.dirname(path)
 
     # list files and directories
-    sumarries = []
-    csvf = "Id,Matricule,NomComplet,Group,File\n"
+    matricules_data = {}
+    duplicates = set()
+    invalid = []
     for root, dirs, files in os.walk(path):
         for f in files:
             if not f.endswith('.pdf'):
                 continue
-            f = "/Users/legraina/Dropbox/Intra/Correction intra/MTH1102H CP HIVER 2022 GROUPE 01/MTH1102H CP HIVER 2022 GROUPE 01-27.pdf"
             file = os.path.join(root, f)
             if os.path.isfile(file):
-                csvf += "%d," % len(sumarries)
                 grays = gray_images(file, shape=shape)
                 if grays is None:
                     print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
@@ -98,16 +96,55 @@ def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5,11)):
                     name = unidecode.unidecode(name)
                 if not mat:
                     print(Fore.RED + "No matricule found for %s" % f + Style.RESET_ALL)
-                    csvf += ",,"
                 else:
                     print("Matricule %s found for %s. Name: %s" % (mat, f, name))
-                    csvf += mat + ',' + name + "," + (grades_names[id_group] if id_group is not None else "")
-                csvf += "," + file + "\n"
 
-                # put everything in an image
-                sumarry = create_summary(id_box, name, None, None, "%d: %s" % (len(sumarries), f), dpi,
-                                         align_matricule_left=False, name_bottom=False)
-                sumarries.append(sumarry)
+                k = mat if mat else "NA"
+                if k not in matricules_data:
+                    matricules_data[k] = []
+                    # if no valid matricule has been found
+                    if k != "NA" and grades_dfs and id_group is None:
+                        invalid.append(k)
+                elif k != "NA":
+                    duplicates.add(k)
+                matricules_data[k].append((id_box, name, file))
+
+    sumarries = []
+    csvf = "Id,Matricule,NomComplet,File\n"
+
+    def add_summary(mat, id_box, name, file, invalid=False):
+        l_csv = '%d,%s,%s,%s\n' % (len(sumarries), mat if mat else '', name if name else '', file)
+        sumarry = create_summary(id_box, name, None, None,
+                                 "%d: %s" % (len(sumarries), file.rsplit('/')[-1]), dpi,
+                                 align_matricule_left=False, name_bottom=False, invalid=invalid)
+        sumarries.append(sumarry)
+        return l_csv
+
+    print(Fore.RED)
+    if 'NA' in matricules_data:
+        for id_box, name, file in matricules_data['NA']:
+            print("No matricule found for %s" % file)
+            csvf += add_summary(None, id_box, None, file)
+        matricules_data.pop('NA')
+
+    for k in sorted(invalid):
+        print("No valid matricule %s for:" % k)
+        for id_box, name, file in matricules_data[k]:
+            print("    " + file)
+            csvf += add_summary(k, id_box, k, file, invalid=True)
+        matricules_data.pop(k)
+
+    for k in sorted(duplicates):
+        print("Duplicate files found for matricule %s:" % k)
+        for id_box, name, file in matricules_data[k]:
+            print("    " + file)
+            csvf += add_summary(k, id_box, k, file, invalid=True)
+        matricules_data.pop(k)
+    print(Style.RESET_ALL)
+
+    for k in sorted(matricules_data):
+        for id_box, name, file in matricules_data[k]:
+            csvf += add_summary(k, id_box, name, file)
 
     # save summary pdf and grades
     pages = create_whole_summary(sumarries)
@@ -116,82 +153,17 @@ def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5,11)):
         wf.write(csvf)
 
 
-def grade_all_exams(path, grades_prefix, box, dir_path='', classifier=None, dpi=300, margin=1, shape=(8.5,11)):
-    shape = (int(dpi * shape[0]), int(dpi * shape[1]))
-
-    # loading our CNN model if needed
-    if classifier is None:
-        classifier = load_model('digit_recognizer.h5')
-
-    # check if the folder for grade exists if any
-    d = grades_prefix.rsplit('/', 1)[0]
-    if d and not os.path.exists(d):
-        raise ValueError("The following directory does not exist: "+d)
-
-    # list files and directories
-    max_h = 0
-    max_w = 0
-    sumarries = []
-    csvf = "Dossier,Fichier,Matricule,Note\n"
-    for f in os.listdir(path):
-        pf = os.path.join(path, f)
-
-        # if directory, grade files inside
-        if os.path.isdir(pf):
-            gprefix = grades_prefix+f+"_"
-            grade_all_exams(pf, gprefix, box, dir_path+("/" if dir_path else "")+f, classifier)
-            continue
-
-        # grade files
-        if not dir_path or not f.endswith('.pdf'):
-            continue
-
-        file = os.path.join(path, f)
-        if os.path.isfile(file):
-            csvf += dir_path+","+f+","
-            grays = gray_images(file, shape=shape)
-            if grays is None:
-                print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
-                continue
-            mat, id_box, id_group = find_matricule(grays, box['front']['id'], box['matricule'], classifier)
-            if not mat:
-                print("No matricule found for %s" % f)
-                csvf += ","
-            else:
-                csvf += mat+","
-
-            total_matched, numbers, grades = grade(grays[0], box['front']['grade'], classifier, add_border=True)
-            if numbers:
-                print("%s: %.2f" % (f, numbers[-1]))
-                csvf += "%.2f\n" % numbers[-1]
-            else:
-                csvf += "\n"
-
-            # put everything in an image
-            sumarry = create_summary(id_box, grades, mat, numbers, total_matched,
-                                     "%s: %s" % (dir_path, f), dpi)
-            sumarries.append(sumarry)
-
-    # save summary pdf and grades
-    pages = create_whole_summary(sumarries)
-    save_pages(pages, grades_prefix + "summary.pdf")
-    with open(grades_prefix+"notes.csv", 'w') as wf:
-        wf.write(csvf)
-
-
-def grade_all(path, grades_csv, box, dpi=300, shape=(8.5,11)):
+def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
     shape = (int(dpi * shape[0]), int(dpi * shape[1]))
 
     # load csv
-    grades_df = pd.read_csv(grades_csv, index_col='Matricule')
+    grades_dfs, grades_names = load_csv(grades_csv)
 
     # loading our CNN model
     classifier = load_model('digit_recognizer.h5')
 
     # grade files
-    max_h = 0
-    max_w = 0
-    sumarries = []
+    sumarries = [[] for f in grades_csv]
     dt = get_date()
     trim = box['trim'] if 'trim' in box else None
     for root, dirs, files in os.walk(path):
@@ -213,22 +185,39 @@ def grade_all(path, grades_csv, box, dpi=300, shape=(8.5,11)):
                     continue
                 gray = grays[0]
                 total_matched, numbers, grades = grade(gray, box['grade'], classifier=classifier, trim=trim)
+                i, name = get_name(m, grades_dfs)
+                if i < 0:
+                    print(Fore.RED + "%s: Matricule (%s) not found in csv files" % (f, m) + Style.RESET_ALL)
                 if numbers:
                     print("%s: %.2f" % (f, numbers[-1]))
-                    grades_df.at[m, 'Note'] = numbers[-1]
-                    grades_df.at[m, 'Dernière modification (note)'] = dt
+                    grades_dfs[i].at[m, 'Note'] = numbers[-1]
+                    grades_dfs[i].at[m, 'Dernière modification (note)'] = dt
                 else:
                     print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
-                sumarry = create_summary(grades, m, numbers, total_matched, f, dpi)
-                sumarries.append((int(m), sumarry))
 
-    # store grades
-    grades_df.to_csv(grades_csv)
+                # recover id box if provided
+                if id_box:
+                    # find the id box
+                    cropped = fetch_box(gray, id_box['front'])
+                    cnts = cv2.findContours(find_edges(cropped, thick=0), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cnts = imutils.grab_contours(cnts)
+                    imwrite_contours("id_gray", cropped, cnts, thick=5)
+                    # Find the biggest contour for the front box
+                    pos, biggest_c = max(enumerate(cnts), key=lambda cnt: cv2.contourArea(cnt[1]))
+                    id_img = get_image_from_contour(cropped, biggest_c)
+                    sumarry = create_summary2(id_img, grades, m, numbers, total_matched, f, dpi)
+                else:
+                    sumarry = create_summary(grades, m, numbers, total_matched, f, dpi)
+                sumarries[i].append((int(m), sumarry))
+
     # write summary
-    sumarries = [s for (mat, s) in sorted(sumarries)]
-    pages = create_whole_summary(sumarries)
-    gname = grades_csv.split('.')[0]
-    save_pages(pages, gname + "_summary.pdf")
+    for i, f in enumerate(grades_csv):
+        i_sumarries = [s for (mat, s) in sorted(sumarries[i])]
+        pages = create_whole_summary(i_sumarries)
+        gname = f.split('.')[0]
+        save_pages(pages, gname + "_summary.pdf")
+        # store grades
+        grades_dfs[i].to_csv(f)
 
 
 def compare_all(path, grades_csv, box, dpi=300, shape=(8.5, 11)):
@@ -284,266 +273,6 @@ def compare_all(path, grades_csv, box, dpi=300, shape=(8.5, 11)):
     # store grades
     print("Accuracy: %.3f (%.3f, %.3f), Precision: %.3f (%.3f, %.3f)"
           % ((tp+tpp) / n, tp / n, tpp / n, (tp+tpp) / (tp+tpp+fp+fpp), tp / (tp+fp), tpp / (tpp+fpp)))
-
-
-def grade(gray, box, classifier=None, add_border=False, trim=None):
-    cropped = fetch_box(gray, box)
-    boxes = find_grade_boxes(cropped, add_border)
-    all_numbers = []
-    for i, b in enumerate(boxes):
-        (x, y, w, h) = cv2.boundingRect(b)
-        if h <= 10 or w <= 10:
-            print("An invalid box number has been found (too small or too thin)")
-            return False, None, cropped
-        box_img = cropped[y + 5:y + h - 5, x + 5:x + w - 5]
-        # check if need to trim
-        n_trim = None
-        if trim:
-            for (j, n) in trim:
-                if i == j or i == len(boxes) + j:
-                    n_trim = n
-                    break
-        all_numbers.append(test(box_img.copy(), classifier, trim=n_trim))
-
-    if len(all_numbers) == 0:
-        print("No valid number has been found")
-        return False, None, cropped
-
-    # find all combination that works
-    combinations = [(0, [])]
-    for numbers in all_numbers:
-        if len(numbers) == 0:
-            print("No valid number has been found for at least one of the box")
-            return False, None, cropped
-        c2 = [(c+p, l+[i]) for p, i in numbers for c, l in combinations]
-        combinations = c2
-    # Try first the ones with the highest probability
-    combinations = sorted(combinations, reverse=True)
-    for p, numbers in combinations:
-        # if only one number, return it
-        if len(numbers) <= 1:
-            return True, numbers, cropped
-        # check the sum
-        total = sum(numbers[:-1])
-        if total != numbers[-1]:
-            continue
-        return True, numbers, cropped
-
-    # Has not been able to check the total -> give the best prediction
-    expected_numbers = [n[0] for n in all_numbers[:-1]]
-    p, total = (sum(n[0] for n in expected_numbers) / len(expected_numbers),
-                sum(n[1] for n in expected_numbers))
-    pt, nt = all_numbers[-1][0]
-    # keep the first numbers, but choose the most probable total (either the sum or the one read)
-    return False, [n for p, n in expected_numbers[:-1]] + [nt if pt >= p else total], cropped
-
-
-def gray_images(fpdf, pages=None, dpi=300, straighten=True, shape=None):
-    # shape: width, height
-    # fpdf: path to pdf file to grade
-    images = []
-    if pages is None:
-        try:
-            images = convert_from_path(fpdf, dpi=dpi)
-        except Image.DecompressionBombError as e:
-            print("Decompression issue for %s." % fpdf)
-            return None
-    else:
-        for p in pages:
-            try:
-                images += convert_from_path(fpdf, dpi=dpi, last_page=p+1, first_page=p)
-            except Image.DecompressionBombError as e:
-                print("Decompression issue on page %d for %s." % (p, fpdf))
-                return None
-    gray_images = []
-    for i, img in enumerate(images):
-        np_img = np.array(img)
-        gray = cv2.cvtColor(np_img, cv2.COLOR_BGR2GRAY)
-        if straighten:
-            try:
-                gray = imstraighten(gray)
-            except ValueError as e:
-                print("For %s, page %d: %s" % (fpdf, i, str(e)))
-        if shape:
-            if abs(gray.shape[0] - shape[1]) > .1 * shape[1] \
-                    or abs(gray.shape[1] - shape[0]) > .1 * shape[0]:
-                print("Resizing %s, wrong format: %.1f by %.1f in." % (fpdf, gray.shape[0]/dpi, gray.shape[1]/dpi))
-                gray = cv2.resize(gray, shape, interpolation=cv2.INTER_LINEAR)
-        imwrite_png("page_%d" % i, gray)
-        gray_images.append(gray)
-    return gray_images
-
-
-def fetch_box(img, box):
-    # box = (x1, x2, y1, y2) in %
-    x = [int(box[0] * img.shape[1]), int(box[1] * img.shape[1]),
-         int(box[2] * img.shape[0]), int(box[3] * img.shape[0])]
-    cropped = img[x[2]:x[3], x[0]:x[1]]  # ys and then xs
-    imwrite_png("cropped", cropped)
-    return cropped
-
-
-def imstraighten(gray):
-    ngray = cv2.bitwise_not(gray)
-    # threshold the image, setting all foreground pixels to
-    # 255 and all background pixels to 0
-    thresh = cv2.threshold(ngray, 0, 255,
-                           cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-    imwrite_png("thresh", thresh)
-
-    # # grab the (x, y) coordinates of all pixel values that
-    # # are greater than zero, then use these coordinates to
-    # # compute a rotated bounding box that contains all
-    # # coordinates
-    # coords = np.column_stack(np.where(thresh > 0))
-
-    # get rid of thinner lines
-    dilated = cv2.dilate(thresh, np.ones((5, 5), np.uint8))
-    imwrite_png("dilated", dilated)
-    # find lines
-    lines = cv2.HoughLinesP(dilated, 1, np.pi/180, 50, minLineLength=half_dpi)
-    if lines is None:
-        return gray
-    # find longuest lines -> should be horizontal or vertical
-    max_dist = 0
-    max_line = None
-    for l in lines:
-        d = np.square(l[0][2] - l[0][0]) + np.square(l[0][3] - l[0][1])
-        if d > max_dist:
-            max_dist = d
-            max_line = l[0]
-    coords = np.array([max_line[0:2], max_line[2:4]])
-    center, dim, angle = cv2.minAreaRect(coords)
-    mangle = (180 + angle) % 90
-    if mangle > 45:
-        mangle = 90 - mangle
-    if abs(mangle) > 10:
-        raise ValueError("Current page is too skewed (angle found: %.2f)." % angle)
-    # rotate the image to deskew it
-    (h, w) = gray.shape
-    center = (w // 2, h // 2)
-    # divide angle by 2 in case of error as we are changing the center and we are just using small angles
-    M = cv2.getRotationMatrix2D(center, mangle, 1.0)
-    rotated = cv2.warpAffine(gray, M, (w, h),
-                             flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-    imwrite_png("rotated", rotated)
-    return rotated
-
-
-def find_edges(cropped, thick=5, min_lenth=80, max_gap=15, angle_resolution=np.pi/2, line_on_original=False):
-    """ Find the lines on the image. """
-    # Computing the edge map via the Canny edge detector
-    edged = cv2.Canny(cropped, 50, 200, 255)
-    imwrite_png("canny", edged)
-    edged = cv2.dilate(edged, kernel=np.ones((3, 3), dtype='uint8'))
-    imwrite_png("dilated", edged)
-
-    if thick:
-        lines = cv2.HoughLinesP(edged, 1, angle_resolution, 50, minLineLength=min_lenth, maxLineGap=max_gap)
-        if line_on_original:
-            edged = cropped.copy()
-        if lines is not None:
-            for l in lines:
-                cv2.line(edged, (l[0][0], l[0][1]), (l[0][2], l[0][3]), (255, 255, 255), thick)
-            imwrite_png("edged", edged)
-
-        # erode the image to keep only the big lines
-        if not line_on_original:
-            edged = cv2.erode(edged, kernel=np.ones((thick, thick), dtype='uint8'))
-            imwrite_png("eroded", edged)
-    return edged
-
-
-def find_grade_boxes(cropped, add_border=False, max_diff=50, thick=5):
-    """ Find boxes on the image. """
-    # add border: useful if having only partial boxes
-    cropped2 = cropped.copy()
-    if add_border:
-        cv2.rectangle(cropped2, (thick, thick), (cropped2.shape[1]-thick, cropped2.shape[0]-thick),
-                      (0, 0, 0), thick)
-        imwrite_png("cropped", cropped2)
-
-    # find contours in the edge map, then sort them by their
-    # size in descending order
-    cnts, hierarchy = cv2.findContours(find_edges(cropped2, thick=thick), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    cnts = imutils.grab_contours((cnts, hierarchy))
-    imwrite_contours("cropped_all_boxes", cropped2, cnts, thick=thick)
-
-    # check if any contour
-    if not cnts:
-        return []
-
-    # keep only the children of the biggest contour
-    pos = max(enumerate(cnts), key=lambda cnt: cv2.contourArea(cnt[1]))[0]
-    ccnts = biggest_children(cnts, hierarchy, pos)
-    # Retrieve
-    # loop over the contours to take the ones that are aligned with the biggest one and are big enough
-    cropped2 = cropped.copy()
-    boxes = []
-    ref = None
-    horizontal = None
-    for c in sorted(ccnts, key=cv2.contourArea, reverse=True):
-        (x, y, w, h) = cv2.boundingRect(c)
-        # set the reference box
-        if ref is None:
-            ref = (x, y, w, h)
-        # box too small
-        elif w * h < .1 * ref[2] * ref[3]:
-            break
-        # for horizontal alignment
-        elif abs(ref[1] - y) <= max_diff:
-            if horizontal is None:
-                horizontal = True
-            # break the alignment
-            elif not horizontal:
-                continue
-            # break the box size
-            if abs(ref[3] - h) >= max_diff:
-                continue
-        # for vertical alignment
-        elif abs(ref[0] - x) <= max_diff:
-            if horizontal is None:
-                horizontal = False
-            # break the alignment
-            elif horizontal:
-                continue
-            # break the box size
-            elif abs(ref[2] - w) >= max_diff:
-                continue
-        # break alignment
-        else:
-            continue
-        boxes.append(c)
-
-    # sort boxes according to alignment
-    boxes = sorted(boxes, key=lambda b: cv2.boundingRect(b)[0 if horizontal else 1])
-    # remove the extreme boxes close to the border if has added some borders
-    if add_border and boxes:
-        (x, y, w, h) = cv2.boundingRect(boxes[0])
-        if x + y <= 4*thick + 5:
-            boxes = boxes[1:]
-        if boxes:
-            (x, y, w, h) = cv2.boundingRect(boxes[-1])
-            if x + y + h + w >= cropped.shape[0] + cropped.shape[1] - 4*thick - 5:
-                boxes = boxes[:-1]
-    # add any missing box
-    if boxes:
-        prev = None
-        boxes2 = []
-        for b in boxes:
-            (x, y, w, h) = cv2.boundingRect(b)
-            if prev is not None:
-                if horizontal:
-                    # add a contour
-                    if x - prev > 4 * thick:
-                        boxes2.append(np.array([[prev+thick, y-thick], [x-thick, y+h+thick]]))
-                elif y - prev > 4 * thick:  # add a contour
-                    boxes2.append(np.array([[x-thick, prev+thick], [x+w+thick, y-thick]]))
-            boxes2.append(b)
-            prev = x+w if horizontal else y+h
-        boxes = boxes2
-    imwrite_contours("cropped_boxes", cropped2, boxes, thick=2*thick, padding=-thick)
-    return boxes
 
 
 def find_matricule(grays, front_box, regular_box, classifier, grades_dfs=[], separate_box=True):
@@ -627,19 +356,73 @@ def find_matricule(grays, front_box, regular_box, classifier, grades_dfs=[], sep
         matricules = [(c+p, '%s%d' % (m, d)) for c, m in matricules for d, p in distri.items()]
     smats = sorted(matricules, reverse=True)
 
-    # find the most valid and probable one if no csv to check the matricule
-    if not grades_dfs:
-        for p, mat in smats:
-            if re.match(re_mat, mat):
-                return mat, id_box, None
-    # otherwise, the most probable matricule that exists
-    else:
+    # find the most probable matricule that exists
+    if grades_dfs:
         for p, mat in smats:
             i, name = get_name(mat, grades_dfs)
             if i >= 0:
                 return mat, id_box, i
+    # find the most valid and probable one if no csv (or not valid) to check the matricule
+    for p, mat in smats:
+        if re.match(re_mat, mat):
+            return mat, id_box, None
 
     return None, id_box, None
+
+
+def grade(gray, box, classifier=None, add_border=False, trim=None):
+    cropped = fetch_box(gray, box)
+    boxes = find_grade_boxes(cropped, add_border, thick=0)
+    all_numbers = []
+    for i, b in enumerate(boxes):
+        (x, y, w, h) = cv2.boundingRect(b)
+        if h <= 10 or w <= 10:
+            print("An invalid box number has been found (too small or too thin)")
+            return False, None, cropped
+        box_img = cropped[y + 5:y + h - 5, x + 5:x + w - 5]
+        # check if need to trim
+        n_trim = None
+        if trim:
+            for (j, n) in trim:
+                if i == j or i == len(boxes) + j:
+                    n_trim = n
+                    break
+            # trim everything
+            if n_trim < 0:
+                continue
+        all_numbers.append(test(box_img.copy(), classifier, trim=n_trim))
+
+    if len(all_numbers) == 0:
+        print("No valid number has been found")
+        return False, None, cropped
+
+    # find all combination that works
+    combinations = [(0, [])]
+    for numbers in all_numbers:
+        if len(numbers) == 0:
+            print("No valid number has been found for at least one of the box")
+            return False, None, cropped
+        c2 = [(c+p, l+[i]) for p, i in numbers for c, l in combinations]
+        combinations = c2
+    # Try first the ones with the highest probability
+    combinations = sorted(combinations, reverse=True)
+    for p, numbers in combinations:
+        # if only one number, return it
+        if len(numbers) <= 1:
+            return True, numbers, cropped
+        # check the sum
+        total = sum(numbers[:-1])
+        if total != numbers[-1]:
+            continue
+        return True, numbers, cropped
+
+    # Has not been able to check the total -> give the best prediction
+    expected_numbers = [n[0] for n in all_numbers[:-1]]
+    p, total = (sum(n[0] for n in expected_numbers) / len(expected_numbers),
+                sum(n[1] for n in expected_numbers))
+    pt, nt = all_numbers[-1][0]
+    # keep the first numbers, but choose the most probable total (either the sum or the one read)
+    return False, [n for p, n in expected_numbers[:-1]] + [nt if pt >= p else total], cropped
 
 
 def test(gray_img, classifier=None, trim=None):
@@ -667,59 +450,6 @@ def test(gray_img, classifier=None, trim=None):
 
     # process all possible digits combinations
     return process_digits_combinations(all_digits, dot)
-
-
-def get_image_from_contour(img, cnt, border=0):
-    (x, y, w, h) = cv2.boundingRect(cnt)
-    img = img[y+border:y+h-border, x+border:x+w-border]
-    imwrite_png("cropped_cnt", img)
-    return img
-
-
-def imwrite_contours(name, gray, cnts, thick=2, padding=0, ignore=(sys.gettrace() is None)):
-    if ignore:
-        return
-    gray = gray.copy()
-    for c in cnts:
-        (x, y, w, h) = cv2.boundingRect(c)
-        cv2.rectangle(gray, (x+padding, y+padding), (x+w-padding, y+h-padding), (0, 0, 0), thick)
-    imwrite_png(name, gray)
-
-
-def biggest_children(cnts, hierarchy, parent_positon):
-    # Look only to the children (startng with the biggest contours) to try to find a matricule
-    n = hierarchy[0][parent_positon][2]  # first child index of the biggest contour
-    scnts = []
-    while n != -1:
-        scnts.append(cnts[n])
-        n = hierarchy[0][n][0]  # next index of the current contour
-    return sorted(scnts, key=cv2.contourArea, reverse=True)
-
-
-def find_digit_contours(gray, split_on_semi_column=True, min_box_before_split=0, max_cnts=None, trim=None):
-    thresh = get_clean_thresh(gray)
-
-    # finding contours in image
-    cnts, h = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cnts = imutils.grab_contours((cnts, h))
-    imwrite_contours("rgray", gray, cnts)
-
-    # clean cnts
-    scnts, dot = clean_and_sort_digit_contours(
-        cnts, gray, split_on_semi_column, min_box_before_split, max_cnts, trim=trim)
-
-    return scnts, dot, thresh
-
-
-def get_clean_thresh(gray):
-    # threshold the gray image, then apply a series of morphological
-    # operations to cleanup the thresholded image
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    imwrite_png("blurred", blurred)
-    thresh = cv2.threshold(blurred, 200, 255,
-                           cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
-    imwrite_png("thresh", thresh)
-    return thresh
 
 
 def clean_and_sort_digit_contours(cnts, gray=None, split_on_semi_column=True,
@@ -774,7 +504,7 @@ def clean_and_sort_digit_contours(cnts, gray=None, split_on_semi_column=True,
         semi_column = -1
         i = 0
         for mx, w, h, c in scnts:
-            if abs(mx - prev_mx) < 5 and abs(w - prev_w) < 2 and abs(h - prev_h) < 2:
+            if abs(mx - prev_mx) < 5 and abs(w - prev_w) < 5 and abs(h - prev_h) < 5:
                 semi_column = i
             prev_mx = mx
             prev_w = w
@@ -890,6 +620,271 @@ def extract_number(digits, dot, just_allowed_decimals=True):
     return float("%s.%s" % (number, decimals))
 
 
+def find_edges(cropped, thick=5, min_lenth=80, max_gap=15, angle_resolution=np.pi/2, line_on_original=False):
+    """ Find the lines on the image. """
+    # Computing the edge map via the Canny edge detector
+    edged = cv2.Canny(cropped, 50, 200, 255)
+    imwrite_png("canny", edged)
+    edged = cv2.dilate(edged, kernel=np.ones((3, 3), dtype='uint8'))
+    imwrite_png("dilated", edged)
+
+    if thick:
+        lines = cv2.HoughLinesP(edged, 1, angle_resolution, 50, minLineLength=min_lenth, maxLineGap=max_gap)
+        if line_on_original:
+            edged = cropped.copy()
+        if lines is not None:
+            for l in lines:
+                cv2.line(edged, (l[0][0], l[0][1]), (l[0][2], l[0][3]), (255, 255, 255), thick)
+            imwrite_png("edged", edged)
+
+        # erode the image to keep only the big lines
+        if not line_on_original:
+            edged = cv2.erode(edged, kernel=np.ones((thick, thick), dtype='uint8'))
+            imwrite_png("eroded", edged)
+    return edged
+
+
+def find_grade_boxes(cropped, add_border=False, max_diff=50, thick=5):
+    """ Find boxes on the image. """
+    # add border: useful if having only partial boxes
+    cropped2 = cropped.copy()
+    if add_border:
+        cv2.rectangle(cropped2, (thick, thick), (cropped2.shape[1]-thick, cropped2.shape[0]-thick),
+                      (0, 0, 0), thick)
+        imwrite_png("cropped", cropped2)
+
+    # find contours in the edge map, then sort them by their
+    # size in descending order
+    cnts, hierarchy = cv2.findContours(find_edges(cropped2, thick=thick), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours((cnts, hierarchy))
+    imwrite_contours("cropped_all_boxes", cropped2, cnts, thick=thick+1)
+
+    # check if any contour
+    if not cnts:
+        return []
+
+    # keep only the children of the biggest contour
+    pos, c = max(enumerate(cnts), key=lambda cnt: cv2.contourArea(cnt[1]))
+    imwrite_png("main_cropped", get_image_from_contour(cropped, c))
+    ccnts = biggest_children(cnts, hierarchy, pos)
+
+    # Retrieve
+    # loop over the contours to take the ones that are aligned with the biggest one and are big enough
+    cropped2 = cropped.copy()
+    boxes = []
+    ref = None
+    horizontal = None
+    imwrite_contours("cropped_boxes", cropped2, ccnts, thick=thick+1)
+    for c in sorted(ccnts, key=cv2.contourArea, reverse=True):
+        (x, y, w, h) = cv2.boundingRect(c)
+        # set the reference box
+        if ref is None:
+            ref = (x, y, w, h)
+        # box too small
+        elif w * h < .1 * ref[2] * ref[3]:
+            break
+        # for horizontal alignment
+        elif abs(ref[1] - y) <= max_diff:
+            if horizontal is None:
+                horizontal = True
+            # break the alignment
+            elif not horizontal:
+                continue
+            # break the box size
+            if abs(ref[3] - h) >= max_diff:
+                continue
+        # for vertical alignment
+        elif abs(ref[0] - x) <= max_diff:
+            if horizontal is None:
+                horizontal = False
+            # break the alignment
+            elif horizontal:
+                continue
+            # break the box size
+            elif abs(ref[2] - w) >= max_diff:
+                continue
+        # break alignment
+        else:
+            continue
+        boxes.append(c)
+
+    # sort boxes according to alignment
+    boxes = sorted(boxes, key=lambda b: cv2.boundingRect(b)[0 if horizontal else 1])
+    # remove the extreme boxes close to the border if has added some borders
+    if add_border and boxes:
+        (x, y, w, h) = cv2.boundingRect(boxes[0])
+        if x + y <= 4*thick + 5:
+            boxes = boxes[1:]
+        if boxes:
+            (x, y, w, h) = cv2.boundingRect(boxes[-1])
+            if x + y + h + w >= cropped.shape[0] + cropped.shape[1] - 4*thick - 5:
+                boxes = boxes[:-1]
+    # add any missing box
+    if boxes:
+        prev = None
+        m_size = max(4 * thick, 20)
+        boxes2 = []
+        for b in boxes:
+            (x, y, w, h) = cv2.boundingRect(b)
+            if prev is not None:
+                if horizontal:
+                    # add a contour
+                    if x - prev > m_size:
+                        boxes2.append(np.array([[prev+thick, y-thick], [x-thick, y+h+thick]]))
+                elif y - prev > m_size:  # add a contour
+                    boxes2.append(np.array([[x-thick, prev+thick], [x+w+thick, y-thick]]))
+            boxes2.append(b)
+            prev = x+w if horizontal else y+h
+        boxes = boxes2
+    imwrite_contours("cropped_boxes", cropped2, boxes, thick=2*(thick+1), padding=-thick-1)
+    return boxes
+
+
+def gray_images(fpdf, pages=None, dpi=300, straighten=True, shape=None):
+    # shape: width, height
+    # fpdf: path to pdf file to grade
+    images = []
+    if pages is None:
+        try:
+            images = convert_from_path(fpdf, dpi=dpi)
+        except Image.DecompressionBombError as e:
+            print("Decompression issue for %s." % fpdf)
+            return None
+    else:
+        for p in pages:
+            try:
+                images += convert_from_path(fpdf, dpi=dpi, last_page=p+1, first_page=p)
+            except Image.DecompressionBombError as e:
+                print("Decompression issue on page %d for %s." % (p, fpdf))
+                return None
+    gray_images = []
+    for i, img in enumerate(images):
+        np_img = np.array(img)
+        gray = cv2.cvtColor(np_img, cv2.COLOR_BGR2GRAY)
+        if straighten:
+            try:
+                gray = imstraighten(gray)
+            except ValueError as e:
+                print("For %s, page %d: %s" % (fpdf, i, str(e)))
+        if shape:
+            if abs(gray.shape[0] - shape[1]) > .1 * shape[1] \
+                    or abs(gray.shape[1] - shape[0]) > .1 * shape[0]:
+                print("Resizing %s, wrong format: %.1f by %.1f in." % (fpdf, gray.shape[0]/dpi, gray.shape[1]/dpi))
+                gray = cv2.resize(gray, shape, interpolation=cv2.INTER_LINEAR)
+        imwrite_png("page_%d" % i, gray)
+        gray_images.append(gray)
+    return gray_images
+
+
+def fetch_box(img, box):
+    # box = (x1, x2, y1, y2) in %
+    x = [int(box[0] * img.shape[1]), int(box[1] * img.shape[1]),
+         int(box[2] * img.shape[0]), int(box[3] * img.shape[0])]
+    cropped = img[x[2]:x[3], x[0]:x[1]]  # ys and then xs
+    imwrite_png("cropped", cropped)
+    return cropped
+
+
+def imstraighten(gray):
+    ngray = cv2.bitwise_not(gray)
+    # threshold the image, setting all foreground pixels to
+    # 255 and all background pixels to 0
+    thresh = cv2.threshold(ngray, 0, 255,
+                           cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+    imwrite_png("thresh", thresh)
+
+    # # grab the (x, y) coordinates of all pixel values that
+    # # are greater than zero, then use these coordinates to
+    # # compute a rotated bounding box that contains all
+    # # coordinates
+    # coords = np.column_stack(np.where(thresh > 0))
+
+    # get rid of thinner lines
+    dilated = cv2.dilate(thresh, np.ones((5, 5), np.uint8))
+    imwrite_png("dilated", dilated)
+    # find lines
+    lines = cv2.HoughLinesP(dilated, 1, np.pi/180, 50, minLineLength=half_dpi)
+    if lines is None:
+        return gray
+    # find longuest lines -> should be horizontal or vertical
+    max_dist = 0
+    max_line = None
+    for l in lines:
+        d = np.square(l[0][2] - l[0][0]) + np.square(l[0][3] - l[0][1])
+        if d > max_dist:
+            max_dist = d
+            max_line = l[0]
+    coords = np.array([max_line[0:2], max_line[2:4]])
+    center, dim, angle = cv2.minAreaRect(coords)
+    mangle = (180 + angle) % 90
+    if mangle > 45:
+        mangle = 90 - mangle
+    if abs(mangle) > 10:
+        raise ValueError("Current page is too skewed (angle found: %.2f)." % angle)
+    # rotate the image to deskew it
+    (h, w) = gray.shape
+    center = (w // 2, h // 2)
+    # divide angle by 2 in case of error as we are changing the center and we are just using small angles
+    M = cv2.getRotationMatrix2D(center, mangle, 1.0)
+    rotated = cv2.warpAffine(gray, M, (w, h),
+                             flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    imwrite_png("rotated", rotated)
+    return rotated
+
+
+def get_image_from_contour(img, cnt, border=0):
+    (x, y, w, h) = cv2.boundingRect(cnt)
+    img = img[y+border:y+h-border, x+border:x+w-border]
+    imwrite_png("cropped_cnt", img)
+    return img
+
+
+def imwrite_contours(name, gray, cnts, thick=2, padding=0, ignore=(sys.gettrace() is None)):
+    if ignore:
+        return
+    gray = gray.copy()
+    for c in cnts:
+        (x, y, w, h) = cv2.boundingRect(c)
+        cv2.rectangle(gray, (x+padding, y+padding), (x+w-padding, y+h-padding), (0, 0, 0), thick)
+    imwrite_png(name, gray)
+
+
+def biggest_children(cnts, hierarchy, parent_positon):
+    # Look only to the children (startng with the biggest contours) to try to find a matricule
+    n = hierarchy[0][parent_positon][2]  # first child index of the biggest contour
+    scnts = []
+    while n != -1:
+        scnts.append(cnts[n])
+        n = hierarchy[0][n][0]  # next index of the current contour
+    return sorted(scnts, key=cv2.contourArea, reverse=True)
+
+
+def find_digit_contours(gray, split_on_semi_column=True, min_box_before_split=0, max_cnts=None, trim=None):
+    thresh = get_clean_thresh(gray)
+
+    # finding contours in image
+    cnts, h = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours((cnts, h))
+    imwrite_contours("rgray", gray, cnts)
+
+    # clean cnts
+    scnts, dot = clean_and_sort_digit_contours(
+        cnts, gray, split_on_semi_column, min_box_before_split, max_cnts, trim=trim)
+
+    return scnts, dot, thresh
+
+
+def get_clean_thresh(gray):
+    # threshold the gray image, then apply a series of morphological
+    # operations to cleanup the thresholded image
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    imwrite_png("blurred", blurred)
+    thresh = cv2.threshold(blurred, 200, 255,
+                           cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+    imwrite_png("thresh", thresh)
+    return thresh
+
+
 def make_square(img, size=28, margin=.1):
     # size: size of the square
     # margin: margin in % of the square
@@ -921,8 +916,8 @@ def get_blank_page(h=ph, w=pw, dim=None):
         return np.full((h, w), 255, np.uint8)
 
 
-def create_summary(id_box, grades, mat, numbers, total_matched, name, dpi,
-                   align_matricule_left=True, name_bottom=True):
+def create_summary2(id_box, grades, mat, numbers, total_matched, name, dpi,
+                   align_matricule_left=True, name_bottom=True, invalid=False):
     w = id_box.shape[1] + grades.shape[1] + dpi
     h = max(id_box.shape[0] + dpi, grades.shape[0])
 
@@ -936,7 +931,7 @@ def create_summary(id_box, grades, mat, numbers, total_matched, name, dpi,
     pos = int(2.5 * dpi) if align_matricule_left else id_box.shape[1] - int(4 * dpi)
     cv2.putText(color_summary, mat if mat else 'N/A',
                 (pos, id_box.shape[0] + half_dpi),  # position at which writing has to start
-                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if mat else RED, 5)
+                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if mat or not invalid else RED, 5)
     if total_matched is not None:
         cv2.putText(color_summary, str(numbers[-1]) if numbers else 'N/A',
                     (id_box.shape[1] + half_dpi, h - half_dpi),  # position at which writing has to start
@@ -949,7 +944,7 @@ def create_summary(id_box, grades, mat, numbers, total_matched, name, dpi,
 
 
 def create_summary(grades, mat, numbers, total_matched, name, dpi,
-                   align_matricule_left=True, name_bottom=True):
+                   align_matricule_left=True, name_bottom=True, invalid=False):
     # put everything in an image
     w = grades.shape[1]
     h = grades.shape[0]
@@ -962,7 +957,7 @@ def create_summary(grades, mat, numbers, total_matched, name, dpi,
     pos = (one_height_dpi, h - half_dpi) if align_matricule_left else (grades.shape[1] - int(2.5 * dpi), half_dpi)
     cv2.putText(color_summary, str(mat) if mat else 'N/A',
                 pos,  # position at which writing has to start
-                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if mat else RED, 5)
+                cv2.FONT_HERSHEY_SIMPLEX, 2, GREEN if mat and not invalid else RED, 5)
     if total_matched is not None:
         cv2.putText(color_summary, str(numbers[-1]) if numbers else 'N/A',
                     (w - dpi, h - half_dpi),  # position at which writing has to start
@@ -986,6 +981,14 @@ def create_whole_summary(sumarries):
 
     # create summary pages
     hmargin = int(pw - max_w) // 2  # horizontal margin
+    f = 1
+    if hmargin < half_dpi:
+        hmargin = half_dpi
+        w = pw - 2*half_dpi
+        f = w / max_w
+        max_w = w
+        max_h = int(max_h * f)
+
     imgh = max_h + 15
     n_s = ph // imgh  # number of pictures by page
     vmargin = int(ph - n_s * imgh) // 2
@@ -995,6 +998,8 @@ def create_whole_summary(sumarries):
     y = vmargin
     # put summaries on pages
     for s in sumarries:
+        if f < 1:
+            s = cv2.resize(s, None, fx=f, fy=f)
         # new page if needed
         if y + s.shape[0] > ph - vmargin:
             # store current page
