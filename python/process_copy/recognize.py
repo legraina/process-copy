@@ -131,14 +131,14 @@ def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5,11)):
         print("No valid matricule %s for:" % k)
         for id_box, name, file in matricules_data[k]:
             print("    " + file)
-            csvf += add_summary(k, id_box, k, file, invalid=True)
+            csvf += add_summary(k, id_box, None, file, invalid=True)
         matricules_data.pop(k)
 
     for k in sorted(duplicates):
         print("Duplicate files found for matricule %s:" % k)
         for id_box, name, file in matricules_data[k]:
             print("    " + file)
-            csvf += add_summary(k, id_box, k, file, invalid=True)
+            csvf += add_summary(k, id_box, name, file, invalid=True)
         matricules_data.pop(k)
     print(Style.RESET_ALL)
 
@@ -163,7 +163,7 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
     classifier = load_model('digit_recognizer.h5')
 
     # grade files
-    sumarries = [[] for f in grades_csv]
+    grades_data = []
     dt = get_date()
     trim = box['trim'] if 'trim' in box else None
     for root, dirs, files in os.walk(path):
@@ -195,7 +195,7 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
                 else:
                     print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
 
-                # recover id box if provided
+                id_img = None
                 if id_box:
                     # find the id box
                     cropped = fetch_box(gray, id_box['front'])
@@ -205,19 +205,33 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
                     # Find the biggest contour for the front box
                     pos, biggest_c = max(enumerate(cnts), key=lambda cnt: cv2.contourArea(cnt[1]))
                     id_img = get_image_from_contour(cropped, biggest_c)
-                    sumarry = create_summary2(id_img, grades, m, numbers, total_matched, f, dpi)
-                else:
-                    sumarry = create_summary(grades, m, numbers, total_matched, f, dpi)
-                sumarries[i].append((int(m), sumarry))
+
+                grades_data.append((m, i, f, grades, numbers, total_matched, id_img))
+
+    # add summarry
+    sumarries = [[] for f in grades_csv]
+
+    def add_summary(file, grades, mat, numbers, total_matched, id_group, id_img=None):
+        lsum = sumarries[id_group]
+        # rename file
+        name = "%d: %s" % (len(lsum), file)  # recover id box if provided
+        if id_img is not None:
+            sumarry = create_summary2(id_img, grades, mat, numbers, total_matched, name, dpi)
+        else:
+            sumarry = create_summary(grades, mat, numbers, total_matched, name, dpi)
+        lsum.append(sumarry)
+
+    grades_data = sorted(grades_data)
+    for mat, id_group, file, grades, numbers, total_matched, id_img in grades_data:
+        add_summary(file, grades, mat, numbers, total_matched, id_group, id_img)
 
     # write summary
     for i, f in enumerate(grades_csv):
-        i_sumarries = [s for (mat, s) in sorted(sumarries[i])]
-        pages = create_whole_summary(i_sumarries)
+        pages = create_whole_summary(sumarries[i])
         gname = f.split('.')[0]
         save_pages(pages, gname + "_summary.pdf")
         # store grades
-        grades_dfs[i].to_csv(f)
+        grades_dfs[i].sort_index().to_csv(f)
 
 
 def compare_all(path, grades_csv, box, dpi=300, shape=(8.5, 11)):
@@ -460,11 +474,8 @@ def clean_and_sort_digit_contours(cnts, gray=None, split_on_semi_column=True,
     middle_y = 0
     for c in cnts:
         (x, y, w, h) = cv2.boundingRect(c)
-        # remove thin contours, but not small ones (for example dots)
-        if w < 10 ^ h < 10:
-            continue
-        # remove very small contours
-        if w + h < 5:
+        # remove thin contours (dot should not been removed)
+        if w < 5 or h < 5:
             continue
         if h > max_h:
             max_h = h
@@ -533,7 +544,7 @@ def clean_and_sort_digit_contours(cnts, gray=None, split_on_semi_column=True,
             continue
         ccnts.append(c)
     if gray is not None:
-        imwrite_contours("rgray", gray, ccnts)
+        imwrite_contours("dgray_cnt", gray, ccnts)
 
     if max_cnts and len(ccnts) > max_cnts:
         return [], 0
@@ -789,8 +800,7 @@ def imstraighten(gray):
     ngray = cv2.bitwise_not(gray)
     # threshold the image, setting all foreground pixels to
     # 255 and all background pixels to 0
-    thresh = cv2.threshold(ngray, 0, 255,
-                           cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+    thresh = cv2.threshold(ngray, 10, 255, cv2.THRESH_BINARY)[1]
     imwrite_png("thresh", thresh)
 
     # # grab the (x, y) coordinates of all pixel values that
@@ -865,7 +875,7 @@ def find_digit_contours(gray, split_on_semi_column=True, min_box_before_split=0,
     # finding contours in image
     cnts, h = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours((cnts, h))
-    imwrite_contours("rgray", gray, cnts)
+    imwrite_contours("rgray_cnt", gray, cnts)
 
     # clean cnts
     scnts, dot = clean_and_sort_digit_contours(
@@ -879,8 +889,7 @@ def get_clean_thresh(gray):
     # operations to cleanup the thresholded image
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     imwrite_png("blurred", blurred)
-    thresh = cv2.threshold(blurred, 200, 255,
-                           cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+    thresh = cv2.threshold(blurred, 200, 255, cv2.THRESH_BINARY_INV)[1]  # | cv2.THRESH_OTSU
     imwrite_png("thresh", thresh)
     return thresh
 
