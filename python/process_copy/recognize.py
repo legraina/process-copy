@@ -65,7 +65,7 @@ def refresh(dpi=300):
 refresh()
 
 
-def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5,11)):
+def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5, 11)):
     shape = (int(dpi * shape[0]), int(dpi * shape[1]))
 
     # loading our CNN model
@@ -99,15 +99,15 @@ def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5,11)):
                 else:
                     print("Matricule %s found for %s. Name: %s" % (mat, f, name))
 
-                k = mat if mat else "NA"
-                if k not in matricules_data:
-                    matricules_data[k] = []
+                m = mat if mat else "NA"
+                if m not in matricules_data:
+                    matricules_data[m] = []
                     # if no valid matricule has been found
-                    if k != "NA" and grades_dfs and id_group is None:
-                        invalid.append(k)
-                elif k != "NA":
-                    duplicates.add(k)
-                matricules_data[k].append((id_box, name, file))
+                    if m != "NA" and grades_dfs and id_group is None:
+                        invalid.append(m)
+                elif m != "NA":
+                    duplicates.add(m)
+                matricules_data[m].append((id_box, name, file))
 
     sumarries = []
     csvf = "Id,Matricule,NomComplet,File\n"
@@ -127,24 +127,26 @@ def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5,11)):
             csvf += add_summary(None, id_box, None, file)
         matricules_data.pop('NA')
 
-    for k in sorted(invalid):
-        print("No valid matricule %s for:" % k)
-        for id_box, name, file in matricules_data[k]:
+    for m in sorted(invalid):
+        print("No valid matricule %s for:" % m)
+        for id_box, name, file in matricules_data[m]:
             print("    " + file)
-            csvf += add_summary(k, id_box, None, file, invalid=True)
-        matricules_data.pop(k)
+            csvf += add_summary(m, id_box, None, file, invalid=True)
+        matricules_data.pop(m)
 
-    for k in sorted(duplicates):
-        print("Duplicate files found for matricule %s:" % k)
-        for id_box, name, file in matricules_data[k]:
+    for m in sorted(duplicates):
+        print("Duplicate files found for matricule %s:" % m)
+        for id_box, name, file in matricules_data[m]:
             print("    " + file)
-            csvf += add_summary(k, id_box, name, file, invalid=True)
-        matricules_data.pop(k)
+            csvf += add_summary(m, id_box, name, file, invalid=True)
+        matricules_data.pop(m)
     print(Style.RESET_ALL)
 
-    for k in sorted(matricules_data):
-        for id_box, name, file in matricules_data[k]:
-            csvf += add_summary(k, id_box, name, file)
+    for m in sorted(matricules_data):
+        if len(matricules_data[m]) != 1:
+            raise ValueError('The list should contain only one element associated to a given matricule (%s)' % m)
+        id_box, name, file = matricules_data[m][0]
+        csvf += add_summary(m, id_box, name, file)
 
     # save summary pdf and grades
     pages = create_whole_summary(sumarries)
@@ -177,6 +179,7 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
                 continue
             m = m.group()
 
+            # try to recognize each grade and verify the total
             file = os.path.join(root, f)
             if os.path.isfile(file):
                 grays = gray_images(file, [0], straighten=False, shape=shape)
@@ -188,6 +191,7 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
                 i, name = get_name(m, grades_dfs)
                 if i < 0:
                     print(Fore.RED + "%s: Matricule (%s) not found in csv files" % (f, m) + Style.RESET_ALL)
+                # fill moodle csv file
                 if numbers:
                     print("%s: %.2f" % (f, numbers[-1]))
                     grades_dfs[i].at[m, 'Note'] = numbers[-1]
@@ -195,6 +199,7 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
                 else:
                     print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
 
+                # Display in the summary the identity box if provided
                 id_img = None
                 if id_box:
                     # find the id box
@@ -207,6 +212,19 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
                     id_img = get_image_from_contour(cropped, biggest_c)
 
                 grades_data.append((m, i, f, grades, numbers, total_matched, id_img))
+
+    # check the number of files that have benn dropped on moodle if any
+    n = 0
+    for df in grades_dfs:
+        for idx, row in df.iterrows():
+            s = row['Statut']
+            if pd.isna(s):
+                continue
+            if s.startswith('Remis'):
+                n += 1
+    if n > 0 and n != len(grades_data):
+        print(Fore.RED + "%d copies have been uploaded on moodle, but %d have been graded" % (n, len(grades_data))
+              + Style.RESET_ALL)
 
     # add summarry
     sumarries = [[] for f in grades_csv]

@@ -143,7 +143,7 @@ def copy_files_for_moodle(path, mpath=None, grades_csv=[]):
                     os.remove(f2)
                 copy_file(file, os.path.join(mpath, folder))
                 n += 1
-    print('%d files has been copied.' % n)
+    print('%d files has been copied' % n)
     return grades_names if len(grades_names) > 1 else []
 
 
@@ -159,7 +159,7 @@ def import_files(dpath, opath, suffix=None, latex_front_page=None):
 
         files = os.listdir(afolder)
         if len(files) != 1:
-            raise ValueError("Subfolder %s does not contain only one file, but %d files." % (f, len(files)))
+            raise ValueError("Subfolder %s does not contain only one file, but %d files" % (f, len(files)))
         file = files[0]
 
         # rename it
@@ -178,7 +178,7 @@ def import_files(dpath, opath, suffix=None, latex_front_page=None):
         dfile = os.path.join(dpath, name)  # destination file
         if copy_file_with_front_page(file, dfile, name=_split[0], mat=mat, latex_front_page=latex_front_page):
             n += 1
-    print('%d files has been copied to %s.' % (n, dpath))
+    print('%d files has been copied to %s' % (n, dpath))
 
 
 def import_files_with_csv(dpath, matricule_csv, grades_csv, suffix=None, latex_front_page=None):
@@ -196,7 +196,7 @@ def import_files_with_csv(dpath, matricule_csv, grades_csv, suffix=None, latex_f
         matricules.add(m)
         i, n = get_name(m, grades_dfs)
         if i < 0:
-            raise ValueError('Matricule %s is not found in any csv file.' % m)
+            raise ValueError('Matricule %s is not found in any csv file' % m)
 
     # copy files
     if not os.path.exists(dpath):
@@ -225,7 +225,7 @@ def import_files_with_csv(dpath, matricule_csv, grades_csv, suffix=None, latex_f
         dfile = os.path.join(p, fname)  # destination file
         if copy_file_with_front_page(file, dfile, name=name, mat=m, latex_front_page=latex_front_page):
             n += 1
-    print('%d files has been copied to %s.' % (n, dpath))
+    print('%d files has been copied to %s' % (n, dpath))
 
 
 def zipdirbatch(path, archive='moodle', batch=None):
@@ -252,7 +252,10 @@ def zipdirbatch(path, archive='moodle', batch=None):
                 print("Compressing ", end="", flush=True)
             else:
                 print(".", end="" if i % 65 else "\nCompressing ", flush=True)
-    print('\nArchive %s.zip created.' % narchive)
+    if i:
+        print('\nArchive %s.zip created and contains %d files' % (narchive, i))
+    else:
+        print('\nNo file to compress for %s.zip' % narchive)
 
 
 def create_front_page(latex_file, name, matricule, latex_input_file=None, tmp_dir='tmp/'):
