@@ -193,9 +193,13 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
                     print(Fore.RED + "%s: Matricule (%s) not found in csv files" % (f, m) + Style.RESET_ALL)
                 # fill moodle csv file
                 if numbers:
-                    print("%s: %.2f" % (f, numbers[-1]))
-                    grades_dfs[i].at[m, 'Note'] = numbers[-1]
-                    grades_dfs[i].at[m, 'Dernière modification (note)'] = dt
+                    if pd.isna(grades_dfs[i].at[m, 'Note']):
+                        print("%s: %.2f" % (f, numbers[-1]))
+                        grades_dfs[i].at[m, 'Note'] = numbers[-1]
+                        grades_dfs[i].at[m, 'Dernière modification (note)'] = dt
+                    elif grades_dfs[i].at[m, 'Note'] != numbers[-1]:
+                        print(Fore.RED + "%s: there is already a grade (%.2f) different of %.2f" %
+                              (f, grades_dfs[i].at[m, 'Note'], numbers[-1]) + Style.RESET_ALL)
                 else:
                     print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
 
@@ -249,7 +253,12 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
         gname = f.split('.')[0]
         save_pages(pages, gname + "_summary.pdf")
         # store grades
-        grades_dfs[i].sort_index().to_csv(f)
+        df = grades_dfs[i]
+        # sort by status (Remis in first) then matricules (index)
+        status = np.array([not v.startswith('Remis') for v in df.Statut.values])
+        sorted_indexes = np.lexsort((df.index.values, status))
+        sdf = df.iloc[sorted_indexes]
+        sdf.to_csv(f)
 
 
 def compare_all(path, grades_csv, box, dpi=300, shape=(8.5, 11)):

@@ -75,10 +75,10 @@ def copy_file_with_front_page(file, dfile, name=None, mat=None, latex_front_page
             copy = fitz.Document(file)
             doc.insert_pdf(copy)
             doc.save(dfile)
-            print("Imported file %s" % f)
+            print("Imported file %s for %s" % (f, name))
         except Exception as e:
             traceback.print_exception(type(e), e, e.__traceback__)
-            print(Fore.RED + 'Error when creating new pdf for %s' % f + Style.RESET_ALL)
+            print(Fore.RED + 'Error when creating new pdf for %s' % file + Style.RESET_ALL)
             if f_page:
                 copy_file(f_page, dfile)
             return False
