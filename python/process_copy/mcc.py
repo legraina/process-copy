@@ -73,8 +73,15 @@ def copy_file_with_front_page(file, dfile, name=None, mat=None, latex_front_page
             f_page = create_front_page(latex_front_page, name, mat)
             doc = fitz.Document(f_page)
             copy = fitz.Document(file)
-            doc.insert_pdf(copy)
-            doc.save(dfile)
+            try:
+                doc.insert_pdf(copy)
+            except Exception:
+                # clean the pdf, and retry
+                copy.save('tmp/'+f, garbage=4, deflate=True)
+                doc = fitz.Document(f_page)
+                copy = fitz.Document('tmp/'+f)
+                doc.insert_pdf(copy)
+            doc.save(dfile, garbage=4, deflate=True)
             print("Imported file %s for %s" % (f, name))
         except Exception as e:
             traceback.print_exception(type(e), e, e.__traceback__)
