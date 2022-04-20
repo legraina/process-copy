@@ -112,10 +112,10 @@ def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5, 11)):
     sumarries = []
     csvf = "Id,Matricule,NomComplet,File\n"
 
-    def add_summary(mat, id_box, name, file, invalid=False):
+    def add_summary(mat, id_box, name, file, invalid=False, initial_index=1):
         l_csv = '%d,%s,%s,%s\n' % (len(sumarries), mat if mat else '', name if name else '', file)
         sumarry = create_summary(id_box, name, None, None,
-                                 "%d: %s" % (len(sumarries), file.rsplit('/')[-1]), dpi,
+                                 "%d: %s" % (len(sumarries)+initial_index, file.rsplit('/')[-1]), dpi,
                                  align_matricule_left=False, name_bottom=False, invalid=invalid)
         sumarries.append(sumarry)
         return l_csv
@@ -161,6 +161,22 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
     # load csv
     grades_dfs, grades_names = load_csv(grades_csv)
 
+    # load max grade if available
+    max_grade = None
+    for df in grades_dfs:
+        for idx, row in df.iterrows():
+            s = row['Note maximale']
+            if pd.isna(s):
+                continue
+            if isinstance(s, str):
+                s = s.replace(',', '.')
+                try:
+                    s = float(s)
+                except:
+                    continue
+            if max_grade is None or s < max_grade:
+                max_grade = s
+
     # loading our CNN model
     classifier = load_model('digit_recognizer.h5')
 
@@ -187,7 +203,8 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
                     print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
                     continue
                 gray = grays[0]
-                total_matched, numbers, grades = grade(gray, box['grade'], classifier=classifier, trim=trim)
+                total_matched, numbers, grades = grade(gray, box['grade'],
+                                                       classifier=classifier, trim=trim, max_grade=max_grade)
                 i, name = get_name(m, grades_dfs)
                 if i < 0:
                     print(Fore.RED + "%s: Matricule (%s) not found in csv files" % (f, m) + Style.RESET_ALL)
@@ -200,6 +217,8 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
                     elif grades_dfs[i].at[m, 'Note'] != numbers[-1]:
                         print(Fore.RED + "%s: there is already a grade (%.2f) different of %.2f" %
                               (f, grades_dfs[i].at[m, 'Note'], numbers[-1]) + Style.RESET_ALL)
+                    else:
+                        print("%s: found same grade %.2f" % (f, numbers[-1]))
                 else:
                     print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
 
@@ -233,10 +252,10 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
     # add summarry
     sumarries = [[] for f in grades_csv]
 
-    def add_summary(file, grades, mat, numbers, total_matched, id_group, id_img=None):
+    def add_summary(file, grades, mat, numbers, total_matched, id_group, id_img=None, initial_index=2):
         lsum = sumarries[id_group]
         # rename file
-        name = "%d: %s" % (len(lsum), file)  # recover id box if provided
+        name = "%d: %s" % (len(lsum)+initial_index, file)  # recover id box if provided
         if id_img is not None:
             sumarry = create_summary2(id_img, grades, mat, numbers, total_matched, name, dpi)
         else:
@@ -411,7 +430,7 @@ def find_matricule(grays, front_box, regular_box, classifier, grades_dfs=[], sep
     return None, id_box, None
 
 
-def grade(gray, box, classifier=None, add_border=False, trim=None):
+def grade(gray, box, classifier=None, add_border=False, trim=None, max_grade=None):
     cropped = fetch_box(gray, box)
     boxes = find_grade_boxes(cropped, add_border, thick=0)
     all_numbers = []
@@ -445,7 +464,7 @@ def grade(gray, box, classifier=None, add_border=False, trim=None):
             return False, None, cropped
         c2 = [(c+p, l+[i]) for p, i in numbers for c, l in combinations]
         combinations = c2
-    # Try first the ones with the highest probability
+    # Try first the ones with the highest probability and below the max grade if available
     combinations = sorted(combinations, reverse=True)
     for p, numbers in combinations:
         # if only one number, return it
@@ -453,6 +472,8 @@ def grade(gray, box, classifier=None, add_border=False, trim=None):
             return True, numbers, cropped
         # check the sum
         total = sum(numbers[:-1])
+        if max_grade is not None and numbers[-1] > max_grade:
+            continue
         if total != numbers[-1]:
             continue
         return True, numbers, cropped
@@ -462,8 +483,17 @@ def grade(gray, box, classifier=None, add_border=False, trim=None):
     p, total = (sum(n[0] for n in expected_numbers) / len(expected_numbers),
                 sum(n[1] for n in expected_numbers))
     pt, nt = all_numbers[-1][0]
-    # keep the first numbers, but choose the most probable total (either the sum or the one read)
-    return False, [n for p, n in expected_numbers[:-1]] + [nt if pt >= p else total], cropped
+    # keep the first numbers, but choose the most probable feasible total (either the sum or the one read)
+    adjusted_total = total
+    if pt >= p:
+        adjusted_total = nt
+    if max_grade is not None:
+        if nt > max_grade:
+            adjusted_total = total
+        if total > max_grade:
+            adjusted_total = nt
+        # if both are greater then max grade, both are false !
+    return False, [n for p, n in expected_numbers[:-1]] + [adjusted_total], cropped
 
 
 def test(gray_img, classifier=None, trim=None):
