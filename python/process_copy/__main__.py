@@ -15,26 +15,43 @@ def check_path(path):
     return os.path.exists(path)
 
 
-def try_alternative_root(path, root=None, check=True):
+def try_alternative_root_paths(path, root=None, check=True):
     if not path:
-        return None
+        return []
 
     if path.startswith('/'):
-        return path
+        if not check:
+            return [path]
+        return glob.glob(path)
 
     if root:
         npath = os.path.join(root, path)
         # if file exist, return new path
-        if not check or glob.glob(npath):
-            return npath
+        if not check:
+            return [npath]
+
+        npaths = glob.glob(npath)
+        if npaths:
+            return npaths
 
     # try path as a relative path
     npath = os.path.abspath(path)
     # if file doesn't exist throw an error
-    if check and not glob.glob(npath):
+    if check:
+        npaths = glob.glob(npath)
+        if npaths:
+            return npaths
         raise ValueError('Path %s does not exist.' % path)
 
-    return npath
+    return [npath]
+
+
+def try_alternative_root_path(path, root=None, check=True):
+    npaths = try_alternative_root_paths(path, root, check)
+    if len(npaths) > 1:
+        raise ValueError("There are several possible paths for "+path)
+    return npaths[0] if npaths else None
+
 
 
 if __name__ == "__main__":
@@ -99,26 +116,30 @@ if __name__ == "__main__":
         if not os.path.exists(args.root):
             raise ValueError('Root path %s does not exist.' % args.root)
 
-    args.path = try_alternative_root(args.path, args.root, check=not args.import_files)
+    args.path = try_alternative_root_paths(args.path, args.root, check=not args.import_files)
     if args.path:
-        print('Path: '+args.path)
+        print('Path: ', args.path)
     if not args.mpath:
         args.mpath = 'matricules.csv' if args.grades and (args.find or args.import_files) else 'moodle'
-    args.mpath = try_alternative_root(args.mpath, args.root, check=args.import_files)
+    args.mpath = try_alternative_root_path(args.mpath, args.root, check=args.import_files)
     if args.mpath:
         print('Moodle path: '+args.mpath)
-    args.frontpage = try_alternative_root(args.frontpage, args.root)
+    args.frontpage = try_alternative_root_path(args.frontpage, args.root)
     if args.frontpage:
         print('Front page latex file: '+args.frontpage)
     # fetch all the csv files provided in the input for the grades
     grades = []
     if args.grades:
         for g in args.grades.split(','):
-            gpath = try_alternative_root(g, args.root)
-            files = os.listdir(gpath) if os.path.isdir(gpath) else glob.glob(gpath)
-            for f in files:
-                if f.endswith('.csv'):
-                    grades.append(os.path.join(gpath, f))
+            gpaths = try_alternative_root_paths(g, args.root)
+            for gpath in gpaths:
+                if os.path.isdir(gpath):
+                    for f in os.listdir(gpath):
+                        if f.endswith('.csv'):
+                            grades.append(os.path.join(gpath, f))
+                elif gpath.endswith('.csv'):
+                    grades.append(gpath)
+
         if grades:
             print('Grades csv files:')
             for g in grades:
@@ -136,7 +157,7 @@ if __name__ == "__main__":
     if args.name:
         l_input += '\\renewcommand{\\devoir}{%s}\n' % args.name
         suffix += args.name
-    config.latex['input'] += l_input
+    config.Latex.input_content += l_input
     if args.suffix is None and suffix:
         args.suffix = suffix
 
@@ -150,6 +171,15 @@ if __name__ == "__main__":
         from process_copy.recognize import find_matricules
         find_matricules(args.path, config.matricule_box[args.find], args.grades)
 
+    if args.import_files:
+        print('Import the pdf files from %s to %s' % (args.mpath, args.path))
+        from process_copy import mcc
+        if args.mpath.endswith('.csv'):
+            mcc.import_files_with_csv(args.path, args.mpath, args.grades,
+                                      suffix=args.suffix, latex_front_page=args.frontpage)
+        else:
+            mcc.import_files(args.path, args.mpath, suffix=args.suffix, latex_front_page=args.frontpage)
+
     if args.grade:
         print('Find the grade for the pdf files in %s' % args.path)
         from process_copy.recognize import grade_all, compare_all
@@ -162,22 +192,13 @@ if __name__ == "__main__":
         except KeyError:
             raise KeyError("Grade configuration %s hasn't any configuration defined in config.py" % args.grade)
 
-    if args.import_files:
-        print('Import the pdf files from %s to %s' % (args.mpath, args.path))
-        from process_copy import mcc
-        if args.mpath.endswith('.csv'):
-            mcc.import_files_with_csv(args.path, args.mpath, args.grades,
-                                      suffix=args.suffix, latex_front_page=args.frontpage)
-        else:
-            mcc.import_files(args.path, args.mpath, suffix=args.suffix, latex_front_page=args.frontpage)
-
     if args.export:
         print('Export the pdf files from %s to %s' % (args.path, args.mpath))
         from process_copy import mcc
         names = mcc.copy_files_for_moodle(args.path, args.mpath, args.grades)
         if names:
             for n in names:
-                ar = try_alternative_root(n, args.root, check=False)
+                ar = try_alternative_root_path(n, args.root, check=False)
                 mcc.zipdirbatch(os.path.join(args.mpath, n), archive=ar, batch=args.batch)
         else:
             mcc.zipdirbatch(args.mpath, archive=args.mpath, batch=args.batch)

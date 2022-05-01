@@ -32,14 +32,15 @@ import fitz
 from colorama import Fore, Style
 import traceback
 
-from process_copy.config import re_mat, latex
+from process_copy.config import re_mat, Latex
+from process_copy.config import MoodleFields as MF
 
 
 MB = 2**20
 
 
 def load_csv(grades_csv):
-    grades_dfs = [pd.read_csv(g, index_col='Matricule') for g in grades_csv]
+    grades_dfs = [pd.read_csv(g, index_col=MF.mat) for g in grades_csv]
     grades_names = [g.rsplit('/')[-1].split('.')[0] for g in grades_csv]
     return grades_dfs, grades_names
 
@@ -98,58 +99,59 @@ def copy_file_with_front_page(file, dfile, name=None, mat=None, latex_front_page
 def get_name(mat, grades_dfs):
     for i, g in enumerate(grades_dfs):
         if mat in g.index:
-            return i, g.at[mat, 'Nom complet']
+            return i, g.at[mat, MF.name]
     return -1, None
 
 
-def copy_files_for_moodle(path, mpath=None, grades_csv=[]):
+def copy_files_for_moodle(paths, mpath=None, grades_csv=[]):
     grades_dfs, grades_names = load_csv(grades_csv)
     moodle_folders = os.listdir(mpath) if not grades_csv else None
     n = 0
-    paths = ["%s/" % n for n in grades_names] if len(grades_csv) > 1 else [""]
-    for root, dirs, files in os.walk(path):
-        for f in files:
-            file = os.path.join(root, f)
-            if os.path.isfile(file) and f.endswith('.pdf'):
-                try:
-                    # search matricule
-                    m = re.search(re_mat, f)
-                    if not m:
+    gpaths = ["%s/" % n for n in grades_names] if len(grades_csv) > 1 else [""]
+    for path in paths:
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                file = os.path.join(root, f)
+                if os.path.isfile(file) and f.endswith('.pdf'):
+                    try:
+                        # search matricule
+                        m = re.search(re_mat, f)
+                        if not m:
+                            print("Matricule wasn't found in " + f)
+                            continue
+                        mat = m.group()
+                    except IndexError:
+                        continue
+                    except StopIteration as e:
                         print("Matricule wasn't found in " + f)
                         continue
-                    mat = m.group()
-                except IndexError:
-                    continue
-                except StopIteration as e:
-                    print("Matricule wasn't found in " + f)
-                    continue
-                # find moodle folder
-                # rebuild moodle folder name: "Nom complet_Identifiant_Matricule_assignsubmission_file_"
-                folder = None
-                if grades_dfs:
-                    for i, g in enumerate(grades_dfs):
-                        if mat in g.index:
-                            participant = g.at[mat, 'Identifiant']
-                            m = re.search('\\d+', participant)
-                            if not m:
-                                print("Moodle participant id not found in " + participant)
-                                continue
-                            m_id = m.group()
-                            folder = "%s%s_%s_%s_assignsubmission_file_" \
-                                     % (paths[i], g.at[mat, 'Nom complet'], m_id, mat)
-                            break
-                    if folder is None:
-                        print("Matricule %s was not found in %s" % (mat, ", ".join(grades_csv)))
-                        continue
-                else:
-                    folder = next(fd for fd in moodle_folders if mat in fd)
-                # copy file
-                folder = os.path.join(mpath, folder)
-                folder_files = glob.glob(folder+"/*")
-                for f2 in folder_files:
-                    os.remove(f2)
-                copy_file(file, os.path.join(mpath, folder))
-                n += 1
+                    # find moodle folder
+                    # rebuild moodle folder name: "Nom complet_Identifiant_Matricule_assignsubmission_file_"
+                    folder = None
+                    if grades_dfs:
+                        for i, g in enumerate(grades_dfs):
+                            if mat in g.index:
+                                participant = g.at[mat, MF.id]
+                                m = re.search('\\d+', participant)
+                                if not m:
+                                    print("Moodle participant id not found in " + participant)
+                                    continue
+                                m_id = m.group()
+                                folder = "%s%s_%s_%s_assignsubmission_file_" \
+                                         % (gpaths[i], g.at[mat, MF.name], m_id, mat)
+                                break
+                        if folder is None:
+                            print("Matricule %s was not found in %s" % (mat, ", ".join(grades_csv)))
+                            continue
+                    else:
+                        folder = next(fd for fd in moodle_folders if mat in fd)
+                    # copy file
+                    folder = os.path.join(mpath, folder)
+                    folder_files = glob.glob(folder+"/*")
+                    for f2 in folder_files:
+                        os.remove(f2)
+                    copy_file(file, os.path.join(mpath, folder))
+                    n += 1
     print('%d files has been copied' % n)
     return grades_names if len(grades_names) > 1 else []
 
@@ -188,14 +190,18 @@ def import_files(dpath, opath, suffix=None, latex_front_page=None):
     print('%d files has been copied to %s' % (n, dpath))
 
 
-def import_files_with_csv(dpath, matricule_csv, grades_csv, suffix=None, latex_front_page=None):
+def import_files_with_csv(dpaths, matricule_csv, grades_csv, suffix=None, latex_front_page=None):
+    if len(dpaths) != 1:
+        raise ValueError("The paths list must contain only one file:", dpaths)
+    dpath = dpaths[0]
+
     grades_dfs, grades_names = load_csv(grades_csv)
     matricule_df = pd.read_csv(matricule_csv, dtype={1: 'str'})
 
     # check matricules validity
     matricules = set()
     for idx, row in matricule_df.iterrows():
-        m = row['Matricule']
+        m = row[MF.mat]
         if pd.isna(m):
             continue
         if m in matricules:
@@ -214,7 +220,7 @@ def import_files_with_csv(dpath, matricule_csv, grades_csv, suffix=None, latex_f
             os.mkdir(p)
     n = 0
     for idx, row in matricule_df.iterrows():
-        m = row['Matricule']
+        m = row[MF.mat]
         if pd.isna(m):
             continue
 
@@ -272,11 +278,11 @@ def create_front_page(latex_file, name, matricule, latex_input_file=None, tmp_di
 
     # define default input file
     if latex_input_file is None:
-        latex_input_file = os.path.join(tmp_dir, latex['input-file'])
+        latex_input_file = os.path.join(tmp_dir, Latex.input_file)
     # remove ascents
     no_accent_name = unidecode.unidecode(name)
     # write the input file
-    input_data = latex['input'] % (no_accent_name, matricule)
+    input_data = Latex.input_content % (no_accent_name, matricule)
     with open(latex_input_file, "w") as f:
         f.write(input_data)
 
@@ -286,7 +292,7 @@ def create_front_page(latex_file, name, matricule, latex_input_file=None, tmp_di
     flog = 'stdout.log'
     with open(flog, 'w') as fstdout:
         try:
-            subprocess.check_call([latex['cmd'], latex_file], stdout=fstdout, timeout=1)
+            subprocess.check_call([Latex.cmd, latex_file], stdout=fstdout, timeout=1)
         except subprocess.TimeoutExpired:
             with open(flog) as f:
                 print(f.read())

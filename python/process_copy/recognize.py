@@ -36,10 +36,12 @@ from pdf2image import convert_from_path
 from PIL import Image
 from datetime import datetime
 from process_copy.config import re_mat
+from process_copy.config import MoodleFields as MF
 from process_copy.mcc import get_name, load_csv
 
 
 allowed_decimals = ['0', '25', '5', '75']
+corrected_decimals = ['5', '75']  # for length 1, use first one, lenght 2, use second one ...
 len_mat = 7
 RED = (225,6,0)
 GREEN = (0,154,23)
@@ -65,7 +67,7 @@ def refresh(dpi=300):
 refresh()
 
 
-def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5, 11)):
+def find_matricules(paths, box, grades_csv=[], dpi=300, shape=(8.5, 11)):
     shape = (int(dpi * shape[0]), int(dpi * shape[1]))
 
     # loading our CNN model
@@ -73,49 +75,57 @@ def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5, 11)):
 
     # load csv
     grades_dfs, grades_names = load_csv(grades_csv)
-    root_dir = os.path.dirname(path)
+    root_dir = None
 
     # list files and directories
     matricules_data = {}
     duplicates = set()
     invalid = []
-    for root, dirs, files in os.walk(path):
-        for f in files:
-            if not f.endswith('.pdf'):
-                continue
-            file = os.path.join(root, f)
-            if os.path.isfile(file):
-                grays = gray_images(file, shape=shape)
-                if grays is None:
-                    print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
-                    continue
-                mat, id_box, id_group = find_matricule(grays, box['front'], box['regular'], classifier, grades_dfs,
-                                                       separate_box=box['separate_box'])
-                name = grades_dfs[id_group].at[mat, 'Nom complet'] if id_group is not None else mat
-                if name:
-                    name = unidecode.unidecode(name)
-                if not mat:
-                    print(Fore.RED + "No matricule found for %s" % f + Style.RESET_ALL)
-                else:
-                    print("Matricule %s found for %s. Name: %s" % (mat, f, name))
+    for path in paths:
+        r = os.path.dirname(path)
+        if not root_dir:
+            root_dir = r
+        elif root_dir.count('/') > r.count('/'):
+            root_dir = r
 
-                m = mat if mat else "NA"
-                if m not in matricules_data:
-                    matricules_data[m] = []
-                    # if no valid matricule has been found
-                    if m != "NA" and grades_dfs and id_group is None:
-                        invalid.append(m)
-                elif m != "NA":
-                    duplicates.add(m)
-                matricules_data[m].append((id_box, name, file))
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                if not f.endswith('.pdf'):
+                    continue
+                file = os.path.join(root, f)
+                if os.path.isfile(file):
+                    grays = gray_images(file, shape=shape)
+                    if grays is None:
+                        print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+                        continue
+                    mat, id_box, id_group = find_matricule(grays, box['front'], box['regular'], classifier, grades_dfs,
+                                                           separate_box=box['separate_box'])
+                    name = grades_dfs[id_group].at[mat, MF.name] if id_group is not None else mat
+                    if name:
+                        name = unidecode.unidecode(name)
+                    if not mat:
+                        print(Fore.RED + "No matricule found for %s" % f + Style.RESET_ALL)
+                    else:
+                        print("Matricule %s found for %s. Name: %s" % (mat, f, name))
+
+                    m = mat if mat else "NA"
+                    if m not in matricules_data:
+                        matricules_data[m] = []
+                        # if no valid matricule has been found
+                        if m != "NA" and grades_dfs and id_group is None:
+                            invalid.append(m)
+                    elif m != "NA":
+                        duplicates.add(m)
+                    matricules_data[m].append((id_box, name, file))
 
     sumarries = []
     csvf = "Id,Matricule,NomComplet,File\n"
 
     def add_summary(mat, id_box, name, file, invalid=False, initial_index=1):
-        l_csv = '%d,%s,%s,%s\n' % (len(sumarries), mat if mat else '', name if name else '', file)
+        i = len(sumarries)+initial_index
+        l_csv = '%d,%s,%s,%s\n' % (i, mat if mat else '', name if name else '', file)
         sumarry = create_summary(id_box, name, None, None,
-                                 "%d: %s" % (len(sumarries)+initial_index, file.rsplit('/')[-1]), dpi,
+                                 "%d: %s" % (i, file.rsplit('/')[-1]), dpi,
                                  align_matricule_left=False, name_bottom=False, invalid=invalid)
         sumarries.append(sumarry)
         return l_csv
@@ -155,7 +165,7 @@ def find_matricules(path, box, grades_csv=[], dpi=300, shape=(8.5, 11)):
         wf.write(csvf)
 
 
-def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
+def grade_all(paths, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
     shape = (int(dpi * shape[0]), int(dpi * shape[1]))
 
     # load csv
@@ -165,7 +175,7 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
     max_grade = None
     for df in grades_dfs:
         for idx, row in df.iterrows():
-            s = row['Note maximale']
+            s = row[MF.max]
             if pd.isna(s):
                 continue
             if isinstance(s, str):
@@ -184,66 +194,68 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
     grades_data = []
     dt = get_date()
     trim = box['trim'] if 'trim' in box else None
-    for root, dirs, files in os.walk(path):
-        for f in files:
-            if not f.endswith('.pdf'):
-                continue
-            # search matricule
-            m = re.search(re_mat, f)
-            if not m:
-                print("Matricule wasn't found in "+f)
-                continue
-            m = m.group()
-
-            # try to recognize each grade and verify the total
-            file = os.path.join(root, f)
-            if os.path.isfile(file):
-                grays = gray_images(file, [0], straighten=False, shape=shape)
-                if grays is None:
-                    print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+    for path in paths:
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                if not f.endswith('.pdf'):
                     continue
-                gray = grays[0]
-                total_matched, numbers, grades = grade(gray, box['grade'],
-                                                       classifier=classifier, trim=trim, max_grade=max_grade)
-                i, name = get_name(m, grades_dfs)
-                if i < 0:
-                    print(Fore.RED + "%s: Matricule (%s) not found in csv files" % (f, m) + Style.RESET_ALL)
-                # fill moodle csv file
-                if numbers:
-                    if pd.isna(grades_dfs[i].at[m, 'Note']):
-                        print("%s: %.2f" % (f, numbers[-1]))
-                        grades_dfs[i].at[m, 'Note'] = numbers[-1]
-                        grades_dfs[i].at[m, 'Dernière modification (note)'] = dt
-                    elif grades_dfs[i].at[m, 'Note'] != numbers[-1]:
-                        print(Fore.RED + "%s: there is already a grade (%.2f) different of %.2f" %
-                              (f, grades_dfs[i].at[m, 'Note'], numbers[-1]) + Style.RESET_ALL)
+                # search matricule
+                m = re.search(re_mat, f)
+                if not m:
+                    print("Matricule wasn't found in "+f)
+                    continue
+                m = m.group()
+
+                # try to recognize each grade and verify the total
+                file = os.path.join(root, f)
+                if os.path.isfile(file):
+                    grays = gray_images(file, [0], straighten=False, shape=shape)
+                    if grays is None:
+                        print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+                        continue
+                    gray = grays[0]
+                    total_matched, numbers, grades = grade(gray, box['grade'],
+                                                           classifier=classifier, trim=trim, max_grade=max_grade)
+                    i, name = get_name(m, grades_dfs)
+                    if i < 0:
+                        print(Fore.RED + "%s: Matricule (%s) not found in csv files" % (f, m) + Style.RESET_ALL)
+                    # fill moodle csv file
+                    if numbers:
+                        if pd.isna(grades_dfs[i].at[m, MF.grade]):
+                            print("%s: %.2f" % (f, numbers[-1]))
+                            grades_dfs[i].at[m, MF.grade] = numbers[-1]
+                            grades_dfs[i].at[m, MF.mdate] = dt
+                        elif grades_dfs[i].at[m, MF.grade] != numbers[-1]:
+                            print(Fore.RED + "%s: there is already a grade (%.2f) different of %.2f" %
+                                  (f, grades_dfs[i].at[m, MF.grade], numbers[-1]) + Style.RESET_ALL)
+                        else:
+                            print("%s: found same grade %.2f" % (f, numbers[-1]))
                     else:
-                        print("%s: found same grade %.2f" % (f, numbers[-1]))
-                else:
-                    print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
+                        print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
+                        grades_dfs[i].at[m, MF.mdate] = dt
 
-                # Display in the summary the identity box if provided
-                id_img = None
-                if id_box:
-                    # find the id box
-                    cropped = fetch_box(gray, id_box['front'])
-                    cnts = cv2.findContours(find_edges(cropped, thick=0), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    cnts = imutils.grab_contours(cnts)
-                    imwrite_contours("id_gray", cropped, cnts, thick=5)
-                    # Find the biggest contour for the front box
-                    pos, biggest_c = max(enumerate(cnts), key=lambda cnt: cv2.contourArea(cnt[1]))
-                    id_img = get_image_from_contour(cropped, biggest_c)
+                    # Display in the summary the identity box if provided
+                    id_img = None
+                    if id_box:
+                        # find the id box
+                        cropped = fetch_box(gray, id_box['front'])
+                        cnts = cv2.findContours(find_edges(cropped, thick=0), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        cnts = imutils.grab_contours(cnts)
+                        imwrite_contours("id_gray", cropped, cnts, thick=5)
+                        # Find the biggest contour for the front box
+                        pos, biggest_c = max(enumerate(cnts), key=lambda cnt: cv2.contourArea(cnt[1]))
+                        id_img = get_image_from_contour(cropped, biggest_c)
 
-                grades_data.append((m, i, f, grades, numbers, total_matched, id_img))
+                    grades_data.append((m, i, f, grades, numbers, total_matched, id_img))
 
     # check the number of files that have benn dropped on moodle if any
     n = 0
     for df in grades_dfs:
         for idx, row in df.iterrows():
-            s = row['Statut']
+            s = row[MF.status]
             if pd.isna(s):
                 continue
-            if s.startswith('Remis'):
+            if s.startswith(MF.status_start_filter):
                 n += 1
     if n > 0 and n != len(grades_data):
         print(Fore.RED + "%d copies have been uploaded on moodle, but %d have been graded" % (n, len(grades_data))
@@ -274,13 +286,13 @@ def grade_all(path, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
         # store grades
         df = grades_dfs[i]
         # sort by status (Remis in first) then matricules (index)
-        status = np.array([not v.startswith('Remis') for v in df.Statut.values])
+        status = np.array([not pd.isna(v) and not v.startswith('Remis') for v in df.Statut.values])
         sorted_indexes = np.lexsort((df.index.values, status))
         sdf = df.iloc[sorted_indexes]
         sdf.to_csv(f)
 
 
-def compare_all(path, grades_csv, box, dpi=300, shape=(8.5, 11)):
+def compare_all(paths, grades_csv, box, dpi=300, shape=(8.5, 11)):
     shape = (int(dpi * shape[0]), int(dpi * shape[1]))
 
     # load csv
@@ -296,40 +308,41 @@ def compare_all(path, grades_csv, box, dpi=300, shape=(8.5, 11)):
     fpp = 0
     fn = 0
     n = 0
-    for f in os.listdir(path):
-        if not f.endswith('.pdf'):
-            continue
-        # search matricule
-        m = re.search('[1-2]\\d{6}(?=\\D)', f)
-        if not m:
-            print("Matricule wasn't found in "+f)
-        m = int(m.group())
-
-        file = os.path.join(path, f)
-        if os.path.isfile(file):
-            grays = gray_images(file, [0], straighten=False, shape=shape)
-            if grays is None:
-                print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+    for path in paths:
+        for f in os.listdir(path):
+            if not f.endswith('.pdf'):
                 continue
-            gray = grays[0]
-            total_matched, numbers = grade(gray, box, classifier)
-            if numbers:
-                print("%s: %.2f" % (f, numbers[-1]))
-                if grades_df.at[m, 'Note'] == numbers[-1]:
-                    if total_matched:
-                        tp += 1
+            # search matricule
+            m = re.search('[1-2]\\d{6}(?=\\D)', f)
+            if not m:
+                print("Matricule wasn't found in "+f)
+            m = int(m.group())
+
+            file = os.path.join(path, f)
+            if os.path.isfile(file):
+                grays = gray_images(file, [0], straighten=False, shape=shape)
+                if grays is None:
+                    print(Fore.RED + "%s: No valid pdf" % f + Style.RESET_ALL)
+                    continue
+                gray = grays[0]
+                total_matched, numbers = grade(gray, box, classifier)
+                if numbers:
+                    print("%s: %.2f" % (f, numbers[-1]))
+                    if grades_df.at[m, MF.grade] == numbers[-1]:
+                        if total_matched:
+                            tp += 1
+                        else:
+                            tpp += 1
+                    elif total_matched:
+                        fp += 1
                     else:
-                        tpp += 1
-                elif total_matched:
-                    fp += 1
+                        fpp += 1
+                    grades_df.at[m, MF.grade] = numbers[-1]
                 else:
-                    fpp += 1
-                grades_df.at[m, 'Note'] = numbers[-1]
-            else:
-                print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
-                fn += 1
-                grades_df.at[m, 'Note'] = -1
-            n += 1
+                    print(Fore.GREEN + "%s: No valid grade" % f + Style.RESET_ALL)
+                    fn += 1
+                    grades_df.at[m, MF.grade] = -1
+                n += 1
     # store grades
     print("Accuracy: %.3f (%.3f, %.3f), Precision: %.3f (%.3f, %.3f)"
           % ((tp+tpp) / n, tp / n, tpp / n, (tp+tpp) / (tp+tpp+fp+fpp), tp / (tp+fp), tpp / (tpp+fpp)))
@@ -484,13 +497,14 @@ def grade(gray, box, classifier=None, add_border=False, trim=None, max_grade=Non
                 sum(n[1] for n in expected_numbers))
     pt, nt = all_numbers[-1][0]
     # keep the first numbers, but choose the most probable feasible total (either the sum or the one read)
+    # when nt is 0, always choose the total
     adjusted_total = total
-    if pt >= p:
+    if pt >= p and nt > 0:
         adjusted_total = nt
     if max_grade is not None:
         if nt > max_grade:
             adjusted_total = total
-        if total > max_grade:
+        if total > max_grade and nt > 0:
             adjusted_total = nt
         # if both are greater then max grade, both are false !
     return False, [n for p, n in expected_numbers[:-1]] + [adjusted_total], cropped
@@ -681,9 +695,14 @@ def extract_number(digits, dot, just_allowed_decimals=True):
 
     # check if decimals are allowed when enable
     if just_allowed_decimals and decimals and decimals not in allowed_decimals:
-        print("Found decimals not allowed: %s is not within %s."
-              % (decimals, ",".join(allowed_decimals)))
-        return None
+        # try to correct decimals
+        l = len(decimals)
+        if l <= len(corrected_decimals):
+            decimals = corrected_decimals[l-1]
+        else:
+            print("Found decimals not allowed: %s is not within %s."
+                  % (decimals, ",".join(allowed_decimals)))
+            return None
 
     return float("%s.%s" % (number, decimals))
 
