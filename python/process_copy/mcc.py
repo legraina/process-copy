@@ -156,7 +156,11 @@ def copy_files_for_moodle(paths, mpath=None, grades_csv=[]):
     return grades_names if len(grades_names) > 1 else []
 
 
-def import_files(dpath, opath, suffix=None, latex_front_page=None):
+def import_files(dpaths, opath, suffix=None, latex_front_page=None):
+    if len(dpaths) != 1:
+        raise ValueError("The paths list must contain only one file:", dpaths)
+    dpath = dpaths[0]
+
     if not os.path.exists(dpath):
         os.mkdir(dpath)
     folders = os.listdir(opath)
