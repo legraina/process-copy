@@ -32,10 +32,10 @@ import re
 import numpy as np, cv2, imutils
 import pandas as pd
 from keras.models import load_model
-from pdf2image import convert_from_path
+import pdf2image
 from PIL import Image
 from datetime import datetime
-from process_copy.config import re_mat
+from process_copy.config import re_mat, known_mistmatch
 from process_copy.config import MoodleFields as MF
 from process_copy.mcc import get_name, load_csv
 
@@ -281,7 +281,7 @@ def grade_all(paths, grades_csv, box, id_box=None, dpi=300, shape=(8.5,11)):
     # write summary
     for i, f in enumerate(grades_csv):
         pages = create_whole_summary(sumarries[i])
-        gname = f.split('.')[0]
+        gname = f.rsplit('.', 1)[0]
         save_pages(pages, gname + "_summary.pdf")
         # store grades
         df = grades_dfs[i]
@@ -664,6 +664,13 @@ def extract_digit(cnt, gray, thresh, classifier, threshold=1e-2, border=7):
         cumul += p
         if cumul > 1 - threshold:
             break
+
+    # find known mismatch, and add it with probability 0
+    for k, v in known_mistmatch.items():
+        numbs = [i for p, i in d]
+        if k in numbs and v not in numbs:
+            d.append((0, v))
+
     return d
 
 
@@ -833,16 +840,19 @@ def gray_images(fpdf, pages=None, dpi=300, straighten=True, shape=None):
     images = []
     if pages is None:
         try:
-            images = convert_from_path(fpdf, dpi=dpi)
+            images = pdf2image.convert_from_path(fpdf, dpi=dpi)
         except Image.DecompressionBombError as e:
             print("Decompression issue for %s." % fpdf)
             return None
     else:
         for p in pages:
             try:
-                images += convert_from_path(fpdf, dpi=dpi, last_page=p+1, first_page=p)
+                images += pdf2image.convert_from_path(fpdf, dpi=dpi, last_page=p+1, first_page=p)
             except Image.DecompressionBombError as e:
                 print("Decompression issue on page %d for %s." % (p, fpdf))
+                return None
+            except pdf2image.exceptions.PDFPageCountError:
+                print("Page count issue on page %d for %s." % (p, fpdf))
                 return None
     gray_images = []
     for i, img in enumerate(images):
@@ -1108,6 +1118,7 @@ def create_whole_summary(sumarries):
 def save_pages(pages, fname):
     images = [Image.fromarray(p) for p in pages]
     images[0].save(fname, save_all=True, append_images=images[1:])
+    print("Summary saved in "+fname)
 
 
 def get_date():
