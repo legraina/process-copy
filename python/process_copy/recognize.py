@@ -351,7 +351,7 @@ def compare_all(paths, grades_csv, box, dpi=300, shape=(8.5, 11)):
 def find_matricule(grays, front_box, regular_box, classifier, grades_dfs=[], separate_box=True):
     possible_digits = [{} for i in range(len_mat)]
 
-    def find_digits(gray_box, split=False):
+    def find_digits(gray_box, separate_boxes, split=False):
         try:
             # find contours of the numbers.
             # If separate_box, each number of the matricule is in its separate box
@@ -365,7 +365,7 @@ def find_matricule(grays, front_box, regular_box, classifier, grades_dfs=[], sep
 
             all_digits = []
             # if each number is in a separate box, extract it individually
-            if separate_box:
+            if separate_boxes:
                 for c in cnts:
                     digit_box = get_image_from_contour(gray_box, c, border=7)
                     dcnts, dot, dthresh = find_digit_contours(digit_box)
@@ -414,14 +414,14 @@ def find_matricule(grays, front_box, regular_box, classifier, grades_dfs=[], sep
     id_box = get_image_from_contour(cropped, biggest_c)
     for cnt in biggest_children(cnts, hierarchy, pos):
         cnt_cropped = get_image_from_contour(cropped, cnt)
-        if find_digits(cnt_cropped, True):
+        if find_digits(cnt_cropped, separate_box, True):
             break
 
     # try to find a matricule on the next page
     for gray in grays[1:]:
         cropped = fetch_box(gray, regular_box)
         # mgray = find_edges(cropped, thick=3, line_on_original=True, max_gap=5, min_lenth=150)
-        find_digits(cropped, True)
+        find_digits(cropped, separate_box, True)
 
     # build matricules and sort them by probabilities
     matricules = [(0, '')]

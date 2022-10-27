@@ -45,7 +45,7 @@ def load_csv(grades_csv):
     return grades_dfs, grades_names
 
 
-def copy_file(file, dest):
+def copy_file(file, dest, move=False):
     # extract folder and name if dest is not a folder
     old_name = None
     folder = dest
@@ -58,7 +58,11 @@ def copy_file(file, dest):
     # copy file
     if not os.path.exists(folder):
         os.makedirs(folder)
-    shutil.copy(file, folder)
+
+    if move:
+        shutil.move(file, folder)
+    else:
+        shutil.copy(file, folder)
 
     # rename it if necessary
     if old_name:
@@ -113,17 +117,8 @@ def copy_files_for_moodle(paths, mpath=None, grades_csv=[]):
             for f in files:
                 file = os.path.join(root, f)
                 if os.path.isfile(file) and f.endswith('.pdf'):
-                    try:
-                        # search matricule
-                        m = re.search(re_mat, f)
-                        if not m:
-                            print("Matricule wasn't found in " + f)
-                            continue
-                        mat = m.group()
-                    except IndexError:
-                        continue
-                    except StopIteration as e:
-                        print("Matricule wasn't found in " + f)
+                    mat = extract_matricule(f)
+                    if not mat:
                         continue
                     # find moodle folder
                     # rebuild moodle folder name: "Nom complet_Identifiant_Matricule_assignsubmission_file_"
@@ -244,6 +239,53 @@ def import_files_with_csv(dpaths, matricule_csv, grades_csv, suffix=None, latex_
             n += 1
     print('%d files has been copied to %s' % (n, dpath))
 
+
+def split_files_into_groups(paths, groups_csv):
+    groups_dfs, groups_names = load_csv(groups_csv)
+    n = 0
+    for path in paths:
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                file = os.path.join(root, f)
+                if os.path.isfile(file) and f.endswith('.pdf'):
+                    mat = extract_matricule(f)
+                    if not mat:
+                        continue
+                    mat = int(mat)
+                    # create group folder
+                    group = None
+                    for i, g in enumerate(groups_dfs):
+                        if mat in g.index:
+                            group = g.at[mat, MF.group]
+                            if group.size > 1:
+                                print("Matricule %s has been found %d times in %s."
+                                      % (mat, group.size, groups_names[i]))
+                                group = group.iloc[0]
+                            break
+                    if group is None:
+                        print("Matricule %s was not found in %s" % (mat, ", ".join(groups_csv)))
+                        continue
+
+                    # copy file
+                    g_folder = os.path.join(root, "%s_%s" % (MF.group, group))
+                    copy_file(file, g_folder, move=True)
+                    n += 1
+    print('%d files has been moved' % n)
+
+
+def extract_matricule(f):
+    try:
+        # search matricule
+        m = re.search(re_mat, f)
+        if not m:
+            print("Matricule wasn't found in " + f)
+            return None
+        return m.group()
+    except IndexError:
+        return None
+    except StopIteration as e:
+        print("Matricule wasn't found in " + f)
+        return None
 
 def zipdirbatch(path, archive='moodle', batch=None):
     # ziph is zipfile handle

@@ -39,3 +39,4 @@ class MoodleFields:
     mdate = 'Dernière modification (note)'
     status = 'Statut'
     status_start_filter = 'Remis'
+    group = 'Groupe'

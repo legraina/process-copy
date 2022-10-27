@@ -55,6 +55,7 @@ def try_alternative_root_path(path, root=None, check=True):
 
 
 if __name__ == "__main__":
+    from process_copy.config import MoodleFields as MF
     parser = argparse.ArgumentParser(description='Move the copy to moodle folders.',
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('path', type=str, help='path to the folder where the copies are or will be.')
@@ -89,7 +90,11 @@ if __name__ == "__main__":
     parser.add_argument('--grades', type=str,
                         help="Path to a csv file to add the grades or a folder containing some csv files or "
                              "a list of files/folders separated by a comma. "
-                             "Needs columns \"Matricule\" and \"Note\".")
+                             "Needs columns \"%s\" and \"%s\"." % (MF.mat, MF.grade))
+    parser.add_argument('--groups', type=str,
+                        help="Path to a csv file to add the groups or a folder containing some csv files or "
+                             "a list of files/folders separated by a comma. "
+                             "Needs columns \"%s\" and \"%s\"." % (MF.mat, MF.group))
     parser.add_argument('-c', '--compare', default=False, action='store_true',
                         help="Compare grades found to the ones in the file provided in the member grades.")
     parser.add_argument("-b", "--batch", type=int, default=500,
@@ -145,6 +150,25 @@ if __name__ == "__main__":
             for g in grades:
                 print('    '+g)
     args.grades = grades
+
+    # fetch all the csv files provided in the input for the groups
+    groups = []
+    if args.groups:
+        for g in args.groups.split(','):
+            gpaths = try_alternative_root_paths(g, args.root)
+            for gpath in gpaths:
+                if os.path.isdir(gpath):
+                    for f in os.listdir(gpath):
+                        if f.endswith('.csv'):
+                            groups.append(os.path.join(gpath, f))
+                elif gpath.endswith('.csv'):
+                    groups.append(gpath)
+
+        if groups:
+            print('Groups csv files:')
+            for g in groups:
+                print('    '+g)
+    args.groups = groups
 
     l_input = ''
     suffix = ''
@@ -202,3 +226,8 @@ if __name__ == "__main__":
                 mcc.zipdirbatch(os.path.join(args.mpath, n), archive=ar, batch=args.batch)
         else:
             mcc.zipdirbatch(args.mpath, archive=args.mpath, batch=args.batch)
+
+    if args.groups:
+        print('Split the pdf files from %s into groups' % args.path)
+        from process_copy import mcc
+        mcc.split_files_into_groups(args.path, args.groups)
